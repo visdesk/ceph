@@ -1321,6 +1321,7 @@ noinst_LIBRARIES += libmon.a
 
 libmds_a_SOURCES = \
 	mds/Anchor.cc \
+	mds/Capability.cc \
 	mds/Dumper.cc \
 	mds/Resetter.cc \
 	mds/MDS.cc \
