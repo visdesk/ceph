@@ -1527,7 +1527,15 @@ void OSD::load_pgs()
     bufferlist bl;
     epoch_t map_epoch = PG::peek_map_epoch(store, *it, &bl);
 
-    PG *pg = _open_lock_pg(map_epoch == 0 ? osdmap : service.get_map(map_epoch), pgid);
+    OSDMapRef open_map;
+    if (map_epoch == 0) {
+      open_map = osdmap;
+    } else {
+      open_map = service.get_map(map_epoch);
+      if (!open_map)
+	open_map = osdmap; // work around in case map was removed
+    }
+    PG *pg = _open_lock_pg(open_map, pgid);
 
     // read pg state, log
     pg->read_state(store, bl);
@@ -4474,7 +4482,10 @@ OSDMapRef OSDService::get_map(epoch_t epoch)
   if (epoch > 0) {
     dout(20) << "get_map " << epoch << " - loading and decoding " << map << dendl;
     bufferlist bl;
-    assert(_get_map_bl(epoch, bl));
+    if (!_get_map_bl(epoch, bl)) {
+      delete map;
+      return OSDMapRef();
+    }
     map->decode(bl);
   } else {
     dout(20) << "get_map " << epoch << " - return initial " << map << dendl;
