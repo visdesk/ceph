@@ -379,6 +379,7 @@ public:
   void unlock() {
     //generic_dout(0) << this << " " << info.pgid << " unlock" << dendl;
     assert(!dirty_info);
+    assert(!dirty_big_info);
     assert(!dirty_log);
     _lock.Unlock();
   }
@@ -417,7 +418,7 @@ public:
   }
 
 
-  bool dirty_info, dirty_log;
+  bool dirty_info, dirty_big_info, dirty_log;
 
 public:
   // pg state
