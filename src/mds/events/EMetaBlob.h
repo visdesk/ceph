@@ -114,14 +114,13 @@ public:
     }
 
     void encode(bufferlist& bl) const {
-      __u8 struct_v = 3;
-      ::encode(struct_v, bl);
       assert(_enc.length());
+      ENCODE_START(4, 4, bl);
       bl.append(_enc); 
+      ENCODE_FINISH(bl);
     }
     void decode(bufferlist::iterator &bl) {
-      __u8 struct_v;
-      ::decode(struct_v, bl);
+      DECODE_START_LEGACY_COMPAT_LEN(4, 4, 4, bl);
       ::decode(dn, bl);
       ::decode(dnfirst, bl);
       ::decode(dnlast, bl);
@@ -150,6 +149,7 @@ public:
 	  ::decode(old_inodes, bl);
 	}
       }
+      DECODE_FINISH(bl);
     }
 
     void update_inode(MDS *mds, CInode *in);
@@ -189,23 +189,13 @@ public:
     remotebit() {}
 
     void encode(bufferlist& bl) const {
-      __u8 struct_v = 1;
-      ::encode(struct_v, bl);
       assert(_enc.length());
+      ENCODE_START(2, 2, bl);
       bl.append(_enc);
-      /*
-      ::encode(dn, bl);
-      ::encode(dnfirst, bl);
-      ::encode(dnlast, bl);
-      ::encode(dnv, bl);
-      ::encode(ino, bl);
-      ::encode(d_type, bl);
-      ::encode(dirty, bl);
-      */
+      ENCODE_FINISH(bl);
     }
     void decode(bufferlist::iterator &bl) {
-      __u8 struct_v;
-      ::decode(struct_v, bl);
+      DECODE_START_LEGACY_COMPAT_LEN(2, 2, 2, bl);
       ::decode(dn, bl);
       ::decode(dnfirst, bl);
       ::decode(dnlast, bl);
@@ -213,6 +203,7 @@ public:
       ::decode(ino, bl);
       ::decode(d_type, bl);
       ::decode(dirty, bl);
+      DECODE_FINISH(bl);
     }
     void print(ostream& out) {
       out << " remotebit dn " << dn << " [" << dnfirst << "," << dnlast << "] dnv " << dnv
@@ -246,26 +237,19 @@ public:
     nullbit() {}
 
     void encode(bufferlist& bl) const {
-      __u8 struct_v = 1;
-      ::encode(struct_v, bl);
       assert(_enc.length());
+      ENCODE_START(2, 2, bl);
       bl.append(_enc);
-      /*
-      ::encode(dn, bl);
-      ::encode(dnfirst, bl);
-      ::encode(dnlast, bl);
-      ::encode(dnv, bl);
-      ::encode(dirty, bl);
-      */
+      ENCODE_FINISH(bl);
     }
     void decode(bufferlist::iterator &bl) {
-      __u8 struct_v;
-      ::decode(struct_v, bl);
+      DECODE_START_LEGACY_COMPAT_LEN(2, 2, 2, bl);
       ::decode(dn, bl);
       ::decode(dnfirst, bl);
       ::decode(dnlast, bl);
       ::decode(dnv, bl);
       ::decode(dirty, bl);
+      DECODE_FINISH(bl);
     }
     void print(ostream& out) {
       out << " nullbit dn " << dn << " [" << dnfirst << "," << dnlast << "] dnv " << dnv
@@ -323,6 +307,7 @@ public:
 	p->print(out);
     }
 
+    // if this changes, update the versioning in encode for it!
     void _encode_bits() const {
       ::encode(dfull, dnbl);
       ::encode(dremote, dnbl);
@@ -338,8 +323,7 @@ public:
     }
 
     void encode(bufferlist& bl) const {
-      __u8 struct_v = 1;
-      ::encode(struct_v, bl);
+      ENCODE_START(2, 2, bl);
       ::encode(fnode, bl);
       ::encode(state, bl);
       ::encode(nfull, bl);
@@ -347,10 +331,10 @@ public:
       ::encode(nnull, bl);
       _encode_bits();
       ::encode(dnbl, bl);
+      ENCODE_FINISH(bl);
     }
     void decode(bufferlist::iterator &bl) {
-      __u8 struct_v;
-      ::decode(struct_v, bl);
+      DECODE_START_LEGACY_COMPAT_LEN(2, 2, 2, bl)
       ::decode(fnode, bl);
       ::decode(state, bl);
       ::decode(nfull, bl);
@@ -358,6 +342,7 @@ public:
       ::decode(nnull, bl);
       ::decode(dnbl, bl);
       dn_decoded = false;      // don't decode bits unless we need them.
+      DECODE_FINISH(bl);
     }
   };
   WRITE_CLASS_ENCODER(dirlump)
@@ -394,8 +379,7 @@ private:
 
  public:
   void encode(bufferlist& bl) const {
-    __u8 struct_v = 3;
-    ::encode(struct_v, bl);
+    ENCODE_START(4, 4, bl);
     ::encode(lump_order, bl);
     ::encode(lump_map, bl);
     bufferlist rootbl;
@@ -416,10 +400,10 @@ private:
     ::encode(client_reqs, bl);
     ::encode(renamed_dirino, bl);
     ::encode(renamed_dir_frags, bl);
+    ENCODE_FINISH(bl);
   } 
   void decode(bufferlist::iterator &bl) {
-    __u8 struct_v;
-    ::decode(struct_v, bl);
+    DECODE_START_LEGACY_COMPAT_LEN(4, 4, 4, bl);
     ::decode(lump_order, bl);
     ::decode(lump_map, bl);
     bufferlist rootbl;
@@ -453,6 +437,7 @@ private:
       ::decode(renamed_dirino, bl);
       ::decode(renamed_dir_frags, bl);
     }
+    DECODE_FINISH(bl);
   }
 
 
