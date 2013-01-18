@@ -3016,8 +3016,7 @@ void CInode::_decode_locks_rejoin(bufferlist::iterator& p, list<Context*>& waite
 
 void CInode::encode_export(bufferlist& bl)
 {
-  __u8 struct_v = 2;
-  ::encode(struct_v, bl);
+  ENCODE_START(3, 3, bl)
   _encode_base(bl);
 
   bool dirty = is_dirty();
@@ -3047,6 +3046,7 @@ void CInode::encode_export(bufferlist& bl)
 
   _encode_locks_full(bl);
   get(PIN_TEMPEXPORTING);
+  ENCODE_FINISH(bl);
 }
 
 void CInode::finish_export(utime_t now)
@@ -3064,8 +3064,7 @@ void CInode::finish_export(utime_t now)
 void CInode::decode_import(bufferlist::iterator& p,
 			   LogSegment *ls)
 {
-  __u8 struct_v;
-  ::decode(struct_v, p);
+  DECODE_START_LEGACY_COMPAT_LEN(3, 3, 3, p);
 
   _decode_base(p);
 
@@ -3127,4 +3126,5 @@ void CInode::decode_import(bufferlist::iterator& p,
   }
 
   _decode_locks_full(p);
+  DECODE_FINISH(p);
 }
