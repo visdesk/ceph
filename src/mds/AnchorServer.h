@@ -33,20 +33,20 @@ class AnchorServer : public MDSTableServer {
 
   void reset_state();
   void encode_server_state(bufferlist& bl) {
-    __u8 v = 1;
-    ::encode(v, bl);
+    ENCODE_START(2, 2, bl);
     ::encode(anchor_map, bl);
     ::encode(pending_create, bl);
     ::encode(pending_destroy, bl);
     ::encode(pending_update, bl);
+    ENCODE_FINISH(bl);
   }
   void decode_server_state(bufferlist::iterator& p) {
-    __u8 v;
-    ::decode(v, p);
+    DECODE_START_LEGACY_COMPAT_LEN(2, 2, 2, p);
     ::decode(anchor_map, p);
     ::decode(pending_create, p);
     ::decode(pending_destroy, p);
     ::decode(pending_update, p);
+    DECODE_FINISH(p);
   }
 
   bool add(inodeno_t ino, inodeno_t dirino, __u32 dn_hash, bool replace);
@@ -54,6 +54,7 @@ class AnchorServer : public MDSTableServer {
   void dec(inodeno_t ino, int ref=1);
 
   void dump();
+  static void generate_test_instances(list<AnchorServer*>& ls);
 
   // server bits
   void _prepare(bufferlist &bl, uint64_t reqid, int bymds);

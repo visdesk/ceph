@@ -41,6 +41,15 @@ void AnchorServer::dump()
     dout(15) << "dump " << it->second << dendl;
 }
 
+void AnchorServer::generate_test_instances(list<AnchorServer*>& ls)
+{
+  AnchorServer *sample = new AnchorServer(NULL); // this shouldn't get de-refed here
+  sample->pending_create[0] = 0;
+  sample->pending_destroy[0] = 1;
+  sample->anchor_map[0] = Anchor();
+  ls.push_back(sample);
+}
+
 
 
 /*
