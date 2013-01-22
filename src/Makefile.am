@@ -1685,7 +1685,6 @@ noinst_HEADERS = \
         mds/events/ESession.h\
         mds/events/ESessions.h\
         mds/events/ESlaveUpdate.h\
-        mds/events/EString.h\
         mds/events/ESubtreeMap.h\
 	mds/events/ETableClient.h\
 	mds/events/ETableServer.h\
