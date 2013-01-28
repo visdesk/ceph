@@ -632,12 +632,7 @@ def parse_args():
         'path',
         metavar='PATH',
         nargs='?',
-        help='path to block device when using --mount',
-        )
-    parser.add_argument(
-        '--dir',
-        metavar='DIR',
-        help='path to an OSD directory to activate',
+        help='path to block device or directory',
         )
     parser.add_argument(
         '--mark-init',
@@ -668,20 +663,25 @@ def main():
     try:
         cluster = None
         osd_id = None
-        if args.mount:
+
+        if not os.path.exists(args.path):
+            raise ActivateError('%s does not exist', args.path)
+
+        mode = os.stat(args.path).st_mode
+        if stat.S_ISBLK(mode):
             (cluster, osd_id) = mount_activate(
                 dev=args.path,
                 activate_key_template=args.activate_key_template,
                 init=args.mark_init,
                 )
-        elif args.dir is not None:
+        elif stat.S_ISDIR(mode):
             (cluster, osd_id) = activate_dir(
-                path=args.dir,
+                path=args.path,
                 activate_key_template=args.activate_key_template,
                 init=args.mark_init,
                 )
         else:
-            raise ActivateError('need to specify a mount or a directory')
+            raise ActivateError('%s is not a directory or block device', args.path)
 
         start_daemon(
             cluster=cluster,
