@@ -68,6 +68,28 @@ class UnmountError(PrepareError):
     """
 
 
+def is_partition(dev):
+    """
+    Check whether a given device is a partition or a full disk.
+    """
+    # resolve symlink(s)
+    max = 10
+    while stat.S_ISLNK(os.lstat(dev).st_mode):
+        dev = os.readlink(dev)
+        max -= 1
+        if max == 0:
+            raise PrepareError('%s is a rats nest of symlinks', dev)
+    if not stat.S_ISBLK(os.lstat(dev).st_mode):
+        raise PrepareError('%s is not a block device', dev)
+
+    # if the device ends in a number, it is a partition (e.g., /dev/sda3)
+
+    # ugh i have no internet.. how do you do a python regex?
+    if dev.endswith('0') or dev.endswith('1') or dev.endswith('2') or dev.endswith('3') or dev.endswith('4') or dev.endswith('4') or dev.endswith('6') or dev.endswith('7') or dev.endswith('8') or dev.endswith('9'):
+        return True
+    return False
+
+
 def write_one_line(parent, name, text):
     """
     Write a file whose sole contents are a single line.
@@ -298,14 +320,114 @@ def prepare_dir(
 
     if journal is not None:
         # we're using an external journal; point to it here
-        log.debug('Adding journal symlink %s/journal -> %s', path, journal)
-        os.symlink(
-            journal,
-            os.path.join(path, 'journal'),
-            )
+        create = True
+        canonical = os.path.join(path, 'journal')
+        if os.path.lexists(canonical):
+            old = os.readlink(canonical)
+            if old != journal:
+                log.debug('Removing old journal symlink %s -> %s', canonical, old)
+                try:
+                    os.unlink(canonical)
+                except:
+                    raise ActivateError('unable to remove old symlink %s', canonical)
+            else:
+                create = False
+        if create:
+            log.debug('Creating journal symlink %s -> %s', canonical, journal)
+            try:
+                os.symlink(journal, canonical)
+            except:
+                raise ActivateError('unable to create symlink %s -> %s', canonical, path)
+
     write_one_line(path, 'ceph_fsid', cluster_uuid)
     write_one_line(path, 'fsid', osd_uuid)
     write_one_line(path, 'magic', CEPH_OSD_ONDISK_MAGIC)
+
+
+def prepare_journal(
+    disk,
+    journal,
+    journal_size,
+    ):
+
+    if journal is None:
+        return None
+
+    jmode = os.stat(journal).st_mode
+
+    if stat.S_ISREG(jmode):
+        # journal is a regular file
+        log.debug('Journal is regular file %s', journal)
+        return journal
+
+    if not stat.S_ISBLK(jmode):
+        raise PrepareError('Journal %s is neither a file nor block device')
+
+    if is_partition(journal):
+        log.debug('Journal %s is a partition', journal)
+        return journal
+
+    # it is a whole disk.  partition!
+    journal_uuid = str(uuid.uuid4())
+
+    if journal == disk:
+        # we're sharing the disk between osd data and journal;
+        # make journal be partition number 2, so it's pretty; put
+        # journal at end of free space so partitioning tools don't
+        # reorder them suddenly
+        num = 2
+        journal_part = '{num}:-{size}M:0'.format(
+            num=num,
+            size=journal_size,
+            )
+    else:
+        # sgdisk has no way for me to say "whatever is the next
+        # free index number" when setting type guids etc, so we
+        # need to awkwardly look up the next free number, and then
+        # fix that in the call -- and hope nobody races with us;
+        # then again nothing guards the partition table from races
+        # anyway
+        num = get_free_partition_index(dev=journal)
+        journal_part = '{num}:0:+{size}M'.format(
+            num=num,
+            size=journal_size,
+            )
+
+    try:
+        log.debug('Creating journal partition num %d size %d on %s', num, journal_size, journal)
+        subprocess.check_call(
+            args=[
+                'sgdisk',
+                '--new={part}'.format(part=journal_part),
+                '--change-name={num}:ceph journal'.format(num=num),
+                '--partition-guid={num}:{journal_uuid}'.format(
+                    num=num,
+                    journal_uuid=journal_uuid,
+                    ),
+                '--typecode={num}:{uuid}'.format(
+                    num=num,
+                    uuid=JOURNAL_UUID,
+                    ),
+                '--',
+                journal,
+                ],
+            )
+        subprocess.check_call(
+            args=[
+                # also make sure the kernel refreshes the new table
+                'partprobe',
+                journal,
+                ],
+            )
+
+        journal_symlink = '/dev/disk/by-partuuid/{journal_uuid}'.format(
+            journal_uuid=journal_uuid,
+            )
+        log.debug('Journal is GPT partition %s', journal_symlink)
+        return journal_symlink
+
+    except subprocess.CalledProcessError as e:
+        raise PrepareError(e)
 
 
 def prepare_disk(
@@ -327,140 +449,110 @@ def prepare_disk(
     it.
     """
 
-    zap(disk)
+    # where is osd data?
+    mode = os.stat(disk).st_mode
+
+    if stat.S_ISBLK(mode) and not is_partition(disk):
+        zap(disk)
+
+        # if there is no journal, and we have a raw disk, use it for
+        # the journal too, since that is a good idea.
+        if journal is None:
+            journal = disk
+
+    # first set up the journal
+    journal_symlink = prepare_journal(
+        disk=disk,
+        journal=journal,
+        journal_size=journal_size,
+        )
 
     osd_uuid = str(uuid.uuid4())
 
-    # store the partition uuid iff using external journal
-    journal_uuid = None
+    if stat.S_ISDIR(mode):
+        # it's a directory; use it as is.
+        path = disk
 
-    if journal is not None:
-        journal_uuid = str(uuid.uuid4())
+    elif stat.S_ISBLK(mode):
+        dev = None
 
-        if journal == disk:
-            # we're sharing the disk between osd data and journal;
-            # make journal be partition number 2, so it's pretty; put
-            # journal at end of free space so partitioning tools don't
-            # reorder them suddenly
-            num = 2
-            journal_part = '{num}:-{size}M:0'.format(
-                num=num,
-                size=journal_size,
-                )
+        if is_partition(disk):
+            log.debug('OSD data device %s is a partition', disk)
+            dev = disk
         else:
-            # sgdisk has no way for me to say "whatever is the next
-            # free index number" when setting type guids etc, so we
-            # need to awkwardly look up the next free number, and then
-            # fix that in the call -- and hope nobody races with us;
-            # then again nothing guards the partition table from races
-            # anyway
-            num = get_free_partition_index(dev=journal)
-            journal_part = '{num}:0:+{size}M'.format(
-                num=num,
-                size=journal_size,
-                )
+            log.debug('Creating osd partition on %s', disk)
+            try:
+                subprocess.check_call(
+                    args=[
+                        'sgdisk',
+                        '--largest-new=1',
+                        '--change-name=1:ceph data',
+                        '--partition-guid=1:{osd_uuid}'.format(
+                            osd_uuid=osd_uuid,
+                            ),
+                        '--typecode=1:%s' % TOBE_UUID,
+                        '--',
+                        disk,
+                        ],
+                    )
+                subprocess.check_call(
+                    args=[
+                        # also make sure the kernel refreshes the new table
+                        'partprobe',
+                        disk,
+                        ],
+                    )
+            except subprocess.CalledProcessError as e:
+                raise PrepareError(e)
 
+            dev = '{disk}1'.format(disk=disk)
+
+        args = [
+            'mkfs',
+            '--type={fstype}'.format(fstype=fstype),
+            ]
+        args.extend(MKFS_ARGS.get(fstype, []))
+        if mkfs_args is not None:
+            args.extend(mkfs_args.split())
+        args.extend
+        args.extend([
+                '--',
+                dev,
+                ])
         try:
-            log.debug('Creating journal partition num %d size %d on %s', num, journal_size, journal)
-            subprocess.check_call(
-                args=[
-                    'sgdisk',
-                    '--new={part}'.format(part=journal_part),
-                    '--change-name={num}:ceph journal'.format(num=num),
-                    '--partition-guid={num}:{journal_uuid}'.format(
-                        num=num,
-                        journal_uuid=journal_uuid,
-                        ),
-                    '--typecode={num}:{uuid}'.format(
-                        num=num,
-                        uuid=JOURNAL_UUID,
-                        ),
-                    '--',
-                    journal,
-                    ],
-                )
-            subprocess.check_call(
-                args=[
-                    # also make sure the kernel refreshes the new table
-                    'partprobe',
-                    journal,
-                    ],
-                )
+            log.debug('Creating %s fs on %s', fstype, dev)
+            subprocess.check_call(args=args)
         except subprocess.CalledProcessError as e:
             raise PrepareError(e)
 
-    try:
-        log.debug('Creating osd partition on %s', disk)
-        subprocess.check_call(
-            args=[
-                'sgdisk',
-                '--largest-new=1',
-                '--change-name=1:ceph data',
-                '--partition-guid=1:{osd_uuid}'.format(
-                    osd_uuid=osd_uuid,
-                    ),
-                '--typecode=1:%s' % TOBE_UUID,
-                '--',
-                disk,
-                ],
-            )
-        subprocess.check_call(
-            args=[
-                # also make sure the kernel refreshes the new table
-                'partprobe',
-                disk,
-                ],
-            )
-    except subprocess.CalledProcessError as e:
-        raise PrepareError(e)
+        path = mount(dev=dev, fstype=fstype, options=mount_options)
 
-    dev = '{disk}1'.format(disk=disk)
-    args = [
-        'mkfs',
-        '--type={fstype}'.format(fstype=fstype),
-        ]
-    args.extend(MKFS_ARGS.get(fstype, []))
-    if mkfs_args is not None:
-        args.extend(mkfs_args.split())
-    args.extend
-    args.extend([
-            '--',
-            dev,
-            ])
-    try:
-        log.debug('Creating %s fs on %s', fstype, dev)
-        subprocess.check_call(args=args)
-    except subprocess.CalledProcessError as e:
-        raise PrepareError(e)
+    else:
+        raise PrepareError('I don\'t know what %s is', disk)
 
-    path = mount(dev=dev, fstype=fstype, options=mount_options)
     try:
-        jdev = None
-        if journal_uuid is not None:
-            # we're using an external journal; point to it here
-            jdev = '/dev/disk/by-partuuid/{journal_uuid}'.format(
-                journal_uuid=journal_uuid,
-                )
         prepare_dir(
             path=path,
-            journal=jdev,
+            journal=journal_symlink,
             cluster_uuid=cluster_uuid,
             osd_uuid=osd_uuid,
             )
     finally:
-        unmount(path)
+        if stat.S_ISBLK(mode):
+            unmount(path)
 
-    try:
-        subprocess.check_call(
-            args=[
-                'sgdisk',
-                '--typecode=1:%s' % OSD_UUID,
-                '--',
-                disk,
-                ],
-            )
-    except subprocess.CalledProcessError as e:
-        raise PrepareError(e)
+    if stat.S_ISBLK(mode) and not is_partition(disk):
+        try:
+            subprocess.check_call(
+                args=[
+                    'sgdisk',
+                    '--typecode=1:%s' % OSD_UUID,
+                    '--',
+                    disk,
+                    ],
+                )
+        except subprocess.CalledProcessError as e:
+            raise PrepareError(e)
 
 
 def parse_args():
@@ -523,26 +615,22 @@ def main():
         level=loglevel,
         )
 
-    if args.zap_disk is not None:
-        zap(args.disk)
-        return
-
     try:
+        if not os.path.exists(args.disk):
+            raise PrepareError('%s does not exist', args.disk)
+        if args.journal is not None and not os.path.exists(args.journal):
+            raise PrepareError('%s does not exist', args.journal)
+
+        if args.zap_disk is not None:
+            zap(args.disk)
+            return
+
         if args.cluster_uuid is None:
             args.cluster_uuid = get_fsid(cluster=args.cluster)
             if args.cluster_uuid is None:
                 raise PrepareError(
                     'must have fsid in config or pass --cluster--uuid=',
                     )
-
-        if stat.S_ISDIR(os.stat(args.disk).st_mode):
-            # it's a directory, not a device.
-            prepare_dir(
-                path=args.disk,
-                journal=args.journal,
-                cluster_uuid=args.cluster_uuid,
-                )
-            return
 
         if args.fs_type is None:
             args.fs_type = get_conf(
