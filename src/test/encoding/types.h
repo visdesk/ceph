@@ -117,6 +117,9 @@ TYPE(mds_table_pending_t)
 TYPE_FEATUREFUL(MDSMap)
 TYPE_FEATUREFUL(MDSMap::mds_info_t)
 
+#include "mds/events/ECommitted.h"
+TYPE(ECommitted)
+
 #ifdef WITH_RADOSGW
 
 #include "rgw/rgw_rados.h"
