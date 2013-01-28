@@ -7,6 +7,7 @@ import os
 import os.path
 import re
 import subprocess
+import stat
 import sys
 import tempfile
 
@@ -69,6 +70,10 @@ class UnmountError(ActivateError):
 
 
 def maybe_mkdir(*a, **kw):
+    # remove any symlink, if it is there..
+    if stat.S_ISLNK(os.lstat(*a).st_mode):
+        log.debug('Removing old symlink at %s', *a)
+        os.unlink(*a)
     try:
         os.mkdir(*a, **kw)
     except OSError, e:
