@@ -680,6 +680,8 @@ def main():
                 activate_key_template=args.activate_key_template,
                 init=args.mark_init,
                 )
+        else:
+            raise ActivateError('need to specify a mount or a directory')
 
         start_daemon(
             cluster=cluster,
