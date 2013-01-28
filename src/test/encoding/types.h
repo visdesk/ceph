@@ -120,6 +120,9 @@ TYPE(mds_load_t)
 TYPE_FEATUREFUL(MDSMap)
 TYPE_FEATUREFUL(MDSMap::mds_info_t)
 
+#include "mds/SessionMap.h"
+TYPE(SessionMap)
+
 #include "mds/events/ECommitted.h"
 TYPE(ECommitted)
 #include "mds/events/EExport.h"
