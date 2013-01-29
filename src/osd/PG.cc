@@ -2315,16 +2315,23 @@ void PG::write_info(ObjectStore::Transaction& t)
 {
   // pg state
   bufferlist infobl;
-  __u8 struct_v = 5;
+  __u8 struct_v = 6;
   ::encode(struct_v, infobl);
   ::encode(get_osdmap()->get_epoch(), infobl);
+
+  // store purged_snaps separately...
+  interval_set<snapid_t> purged_snaps;
+  purged_snaps.swap(info.purged_snaps);
+  ::encode(info, infobl);
+  purged_snaps.swap(info.purged_snaps);
+
   t.collection_setattr(coll, "info", infobl);
  
   // potentially big stuff
   bufferlist bigbl;
   ::encode(past_intervals, bigbl);
   ::encode(snap_collections, bigbl);
-  ::encode(info, bigbl);
+  ::encode(info.purged_snaps, bigbl);
   dout(20) << "write_info bigbl " << bigbl.length() << dendl;
   t.truncate(coll_t::META_COLL, biginfo_oid, 0);
   t.write(coll_t::META_COLL, biginfo_oid, 0, bigbl.length(), bigbl);
@@ -2615,6 +2622,9 @@ int PG::read_info(ObjectStore *store, const coll_t coll, bufferlist &bl,
     p = bl.begin();
     ::decode(struct_v, p);
   } else {
+    epoch_t epoch;
+    ::decode(epoch, p);
+    ::decode(info, p);
     bl.clear();
     int r = store->read(coll_t::META_COLL, biginfo_oid, 0, 0, bl);
     if (r < 0)
@@ -2634,8 +2644,10 @@ int PG::read_info(ObjectStore *store, const coll_t coll, bufferlist &bl,
     }
   } else {
     ::decode(snap_collections, p);
-    if (struct_v >= 4)
+    if (struct_v >= 4 && struct_v < 6)
       ::decode(info, p);
+    else if (struct_v >= 6)
+      ::decode(info.purged_snaps, p);
   }
   return 0;
 }
