@@ -214,7 +214,7 @@ void RGWAccessKey::dump(Formatter *f, const string& user, bool swift) const
   if (!swift) {
     f->dump_string("access_key", id);
   }
-  f->dump_string("secret", key);
+  f->dump_string("secret_key", key);
   f->close_section();
 }
 
@@ -269,7 +269,20 @@ static void perm_to_str(uint32_t mask, char *buf, int len)
 void RGWSubUser::dump(Formatter *f) const
 {
   f->open_object_section("subuser");
-  f->dump_string("name", name);
+  f->dump_string("id", name);
+  char buf[256];
+  perm_to_str(perm_mask, buf, sizeof(buf));
+  f->dump_string("permissions", buf);
+  f->close_section();
+}
+
+void RGWSubUser::dump(Formatter *f, const string& user) const
+{
+  f->open_object_section("subuser");
+  string s = user;
+  s.append(":");
+  s.append(name);
+  f->dump_string("id", s);
   char buf[256];
   perm_to_str(perm_mask, buf, sizeof(buf));
   f->dump_string("permissions", buf);
@@ -298,8 +311,7 @@ void RGWUserInfo::dump(Formatter *f) const
   map<string, RGWSubUser>::const_iterator siter = subusers.begin();
   f->open_array_section("subusers");
   for (; siter != subusers.end(); ++siter) {
-    f->dump_string("id", siter->first);
-    siter->second.dump(f);
+    siter->second.dump(f, user_id);
   }
   f->close_section();
 

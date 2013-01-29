@@ -320,6 +320,7 @@ struct RGWSubUser {
      DECODE_FINISH(bl);
   }
   void dump(Formatter *f) const;
+  void dump(Formatter *f, const string& user) const;
   static void generate_test_instances(list<RGWSubUser*>& o);
 
   void decode_json(JSONObj *obj);

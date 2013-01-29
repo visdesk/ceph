@@ -177,48 +177,6 @@ static uint32_t str_to_perm(const char *str)
   return 0; // unreachable
 }
 
-struct rgw_flags_desc {
-  uint32_t mask;
-  const char *str;
-};
-
-static struct rgw_flags_desc rgw_perms[] = {
- { RGW_PERM_FULL_CONTROL, "full-control" },
- { RGW_PERM_READ | RGW_PERM_WRITE, "read-write" },
- { RGW_PERM_READ, "read" },
- { RGW_PERM_WRITE, "write" },
- { RGW_PERM_READ_ACP, "read-acp" },
- { RGW_PERM_WRITE_ACP, "read-acp" },
- { 0, NULL }
-};
-
-static void perm_to_str(uint32_t mask, char *buf, int len)
-{
-  const char *sep = "";
-  int pos = 0;
-  if (!mask) {
-    snprintf(buf, len, "<none>");
-    return;
-  }
-  while (mask) {
-    uint32_t orig_mask = mask;
-    for (int i = 0; rgw_perms[i].mask; i++) {
-      struct rgw_flags_desc *desc = &rgw_perms[i];
-      if ((mask & desc->mask) == desc->mask) {
-        pos += snprintf(buf + pos, len - pos, "%s%s", sep, desc->str);
-        if (pos == len)
-          return;
-        sep = ", ";
-        mask &= ~desc->mask;
-        if (!mask)
-          return;
-      }
-    }
-    if (mask == orig_mask) // no change
-      break;
-  }
-}
-
 static int get_cmd(const char *cmd, const char *prev_cmd, bool *need_more)
 {
   *need_more = false;
