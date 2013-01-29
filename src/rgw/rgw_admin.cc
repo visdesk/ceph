@@ -355,6 +355,8 @@ string escape_str(string& src, char c)
 
 static void show_user_info(RGWUserInfo& info, Formatter *formatter)
 {
+  info.dump(formatter);
+#if 0
   map<string, RGWAccessKey>::iterator kiter;
   map<string, RGWSubUser>::iterator uiter;
 
@@ -410,8 +412,10 @@ static void show_user_info(RGWUserInfo& info, Formatter *formatter)
   info.caps.dump(formatter);
 
   formatter->close_section();
+#endif
   formatter->flush(cout);
   cout << std::endl;
+
 }
 
 static int create_bucket(string bucket_str, string& user_id, string& display_name)

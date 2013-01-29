@@ -294,6 +294,7 @@ struct RGWAccessKey {
      DECODE_FINISH(bl);
   }
   void dump(Formatter *f) const;
+  void dump(Formatter *f, const string& user, bool swift) const;
   static void generate_test_instances(list<RGWAccessKey*>& o);
 
   void decode_json(JSONObj *obj);
