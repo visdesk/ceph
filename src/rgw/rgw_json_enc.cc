@@ -197,7 +197,7 @@ void RGWAccessKey::dump(Formatter *f) const
 {
   f->open_object_section("key");
   f->dump_string("access_key", id);
-  f->dump_string("secret", key);
+  f->dump_string("secret_key", key);
   f->dump_string("subuser", subuser);
   f->close_section();
 }
@@ -219,9 +219,33 @@ void RGWAccessKey::dump(Formatter *f, const string& user, bool swift) const
 }
 
 void RGWAccessKey::decode_json(JSONObj *obj) {
-  JSONDecoder::decode_json("access_key", id, obj);
-  JSONDecoder::decode_json("secret", key, obj);
-  JSONDecoder::decode_json("subuser", subuser, obj);
+  JSONDecoder::decode_json("access_key", id, obj, true);
+  JSONDecoder::decode_json("secret_key", key, obj, true);
+  if (!JSONDecoder::decode_json("subuser", subuser, obj)) {
+    string user;
+    JSONDecoder::decode_json("user", user, obj, true);
+    int pos = user.find(':');
+    if (pos >= 0) {
+      subuser = user.substr(pos + 1);
+    }
+  }
+}
+
+void RGWAccessKey::decode_json(JSONObj *obj, bool swift) {
+  if (!swift) {
+    decode_json(obj);
+    return;
+  }
+
+  if (!JSONDecoder::decode_json("subuser", subuser, obj)) {
+    string user;
+    JSONDecoder::decode_json("user", user, obj, true);
+    int pos = user.find(':');
+    if (pos >= 0) {
+      subuser = user.substr(pos + 1);
+    }
+  }
+  JSONDecoder::decode_json("secret_key", key, obj, true);
 }
 
 struct rgw_flags_desc {
@@ -289,11 +313,29 @@ void RGWSubUser::dump(Formatter *f, const string& user) const
   f->close_section();
 }
 
+static uint32_t str_to_perm(const string& s)
+{
+  if (s.compare("read") == 0)
+    return RGW_PERM_READ;
+  else if (s.compare("write") == 0)
+    return RGW_PERM_WRITE;
+  else if (s.compare("read-write") == 0)
+    return RGW_PERM_READ | RGW_PERM_WRITE;
+  else if (s.compare("full-control") == 0)
+    return RGW_PERM_FULL_CONTROL;
+  return 0;
+}
+
 void RGWSubUser::decode_json(JSONObj *obj)
 {
-  JSONDecoder::decode_json("name", name, obj);
-  string perms;
-  JSONDecoder::decode_json("permissions", perms, obj);
+  string uid;
+  JSONDecoder::decode_json("id", uid, obj);
+  int pos = uid.find(':');
+  if (pos >= 0)
+    name = uid.substr(pos + 1);
+  string perm_str;
+  JSONDecoder::decode_json("permissions", perm_str, obj);
+  perm_mask = str_to_perm(perm_str);
 }
 
 void RGWUserInfo::dump(Formatter *f) const
@@ -335,78 +377,32 @@ void RGWUserInfo::dump(Formatter *f) const
 }
 
 
-struct AccessKeyEntry {
-  RGWAccessKey key;
-
-  void decode_json(JSONObj *obj) {
-    string uid;
-    JSONDecoder::decode_json("user", uid, obj);
-    int pos = uid.find(':');
-    if (pos >= 0)
-      key.subuser = uid.substr(pos + 1);
-    JSONDecoder::decode_json("access_key", key.id, obj);
-    JSONDecoder::decode_json("secret_key", key.key, obj);
-  }
-};
-
 struct SwiftKeyEntry {
   RGWAccessKey key;
 
   void decode_json(JSONObj *obj) {
-    string uid;
-    JSONDecoder::decode_json("user", uid, obj);
-    int pos = uid.find(':');
-    if (pos >= 0)
-      key.subuser = uid.substr(pos + 1);
-    JSONDecoder::decode_json("secret_key", key.key, obj);
-  }
-};
-
-static uint32_t str_to_perm(const string& s)
-{
-  if (s.compare("read") == 0)
-    return RGW_PERM_READ;
-  else if (s.compare("write") == 0)
-    return RGW_PERM_WRITE;
-  else if (s.compare("readwrite") == 0)
-    return RGW_PERM_READ | RGW_PERM_WRITE;
-  else if (s.compare("full") == 0)
-    return RGW_PERM_FULL_CONTROL;
-  return 0;
-}
-
-struct SubUserEntry {
-  RGWSubUser subuser;
-
-  void decode_json(JSONObj *obj) {
-    string uid;
-    JSONDecoder::decode_json("id", uid, obj);
-    int pos = uid.find(':');
-    if (pos >= 0)
-      subuser.name = uid.substr(pos + 1);
-    string perm_str;
-    JSONDecoder::decode_json("permissions", perm_str, obj);
-    subuser.perm_mask = str_to_perm(perm_str);
+    key.decode_json(obj, true);
   }
 };
 
 void RGWUserInfo::decode_json(JSONObj *obj)
 {
-  JSONDecoder::decode_json("user_id", user_id, obj);
+  JSONDecoder::decode_json("user_id", user_id, obj, true);
   JSONDecoder::decode_json("display_name", display_name, obj);
   JSONDecoder::decode_json("email", user_email, obj);
   bool susp;
   JSONDecoder::decode_json("suspended", susp, obj);
   suspended = (__u8)susp;
   JSONDecoder::decode_json("max_buckets", max_buckets, obj);
+  JSONDecoder::decode_json("auid", auid, obj);
 
-  list<AccessKeyEntry> akeys_list;
+  list<RGWAccessKey> akeys_list;
   JSONDecoder::decode_json("keys", akeys_list, obj);
 
-  list<AccessKeyEntry>::iterator iter;
+  list<RGWAccessKey>::iterator iter;
   for (iter = akeys_list.begin(); iter != akeys_list.end(); ++iter) {
-    AccessKeyEntry& e = *iter;
-    access_keys[e.key.id] = e.key;
+    RGWAccessKey& e = *iter;
+    access_keys[e.id] = e;
   }
 
   list<SwiftKeyEntry> skeys_list;
@@ -418,13 +414,13 @@ void RGWUserInfo::decode_json(JSONObj *obj)
     swift_keys[e.key.subuser] = e.key;
   }
 
-  list<SubUserEntry> susers_list;
-  list<SubUserEntry>::iterator siter;
+  list<RGWSubUser> susers_list;
+  list<RGWSubUser>::iterator siter;
   JSONDecoder::decode_json("subusers", susers_list, obj);
 
   for (siter = susers_list.begin(); siter != susers_list.end(); ++siter) {
-    SubUserEntry& e = *siter;
-    subusers[e.subuser.name] = e.subuser;
+    RGWSubUser& e = *siter;
+    subusers[e.name] = e;
   }
 
   JSONDecoder::decode_json("caps", caps, obj);

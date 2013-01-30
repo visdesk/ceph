@@ -298,6 +298,7 @@ struct RGWAccessKey {
   static void generate_test_instances(list<RGWAccessKey*>& o);
 
   void decode_json(JSONObj *obj);
+  void decode_json(JSONObj *obj, bool swift);
 };
 WRITE_CLASS_ENCODER(RGWAccessKey);
 

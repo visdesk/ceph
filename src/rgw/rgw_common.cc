@@ -743,7 +743,7 @@ struct RGWUserCap {
     string perm_str;
     JSONDecoder::decode_json("perm", perm_str, obj);
     if (RGWUserCaps::parse_cap_perm(perm_str, &perm) < 0) {
-      throw JSONDecoder::err();
+      throw JSONDecoder::err("failed to parse permissions");
     }
   }
 };

@@ -110,7 +110,12 @@ int main(int argc, char **argv) {
 
   RGWUserInfo ui;
 
-  ui.decode_json(&parser);
+  try {
+    ui.decode_json(&parser);
+  } catch (JSONDecoder::err& e) {
+    cout << "failed to decode JSON input: " << e.message << std::endl;
+    exit(1);
+  }
 
   JSONFormatter formatter(true);
 

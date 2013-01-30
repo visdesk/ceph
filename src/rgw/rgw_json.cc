@@ -281,16 +281,16 @@ void decode_json_obj(long& val, JSONObj *obj)
 
  if ((errno == ERANGE && (val == LONG_MAX || val == LONG_MIN)) ||
      (errno != 0 && val == 0)) {
-   throw JSONDecoder::err();
+   throw JSONDecoder::err("failed to parse number");
  }
 
  if (p == start) {
-   throw JSONDecoder::err();
+   throw JSONDecoder::err("failed to parse number");
  }
 
  while (*p != '\0') {
    if (!isspace(*p)) {
-     throw JSONDecoder::err();
+     throw JSONDecoder::err("failed to parse number");
    }
    p++;
  }
@@ -309,16 +309,16 @@ void decode_json_obj(unsigned long& val, JSONObj *obj)
 
  if ((errno == ERANGE && val == ULONG_MAX) ||
      (errno != 0 && val == 0)) {
-   throw JSONDecoder::err();
+   throw JSONDecoder::err("failed to number");
  }
 
  if (p == start) {
-   throw JSONDecoder::err();
+   throw JSONDecoder::err("failed to parse number");
  }
 
  while (*p != '\0') {
    if (!isspace(*p)) {
-     throw JSONDecoder::err();
+     throw JSONDecoder::err("failed to parse number");
    }
    p++;
  }
@@ -330,7 +330,7 @@ void decode_json_obj(int& val, JSONObj *obj)
   decode_json_obj(l, obj);
 #if LONG_MAX > INT_MAX
   if (l > INT_MAX || l < INT_MIN) {
-    throw JSONDecoder::err();
+    throw JSONDecoder::err("integer out of range");
   }
 #endif
 
@@ -343,7 +343,7 @@ void decode_json_obj(unsigned& val, JSONObj *obj)
   decode_json_obj(l, obj);
 #if ULONG_MAX > UINT_MAX
   if (l > UINT_MAX) {
-    throw JSONDecoder::err();
+    throw JSONDecoder::err("unsigned integer out of range");
   }
 #endif
 

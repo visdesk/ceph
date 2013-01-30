@@ -90,7 +90,9 @@ public:
 class JSONDecoder {
 public:
   struct err {
-    err() {}
+    string message;
+
+    err(const string& m) : message(m) {}
   };
 
   RGWJSONParser parser;
@@ -98,12 +100,15 @@ public:
   JSONDecoder(bufferlist& bl) {
     if (!parser.parse(bl.c_str(), bl.length())) {
       cout << "JSONDecoder::err()" << std::endl;
-      throw JSONDecoder::err();
+      throw JSONDecoder::err("failed to parse JSON input");
     }
   }
 
   template<class T>
-  static void decode_json(const string& name, T& val, JSONObj *obj);
+  static bool decode_json(const string& name, T& val, JSONObj *obj, bool mandatory = false);
+
+  template<class T>
+  static void decode_json(const string& name, T& val, T& default_val, JSONObj *obj);
 };
 
 template<class T>
@@ -137,14 +142,45 @@ void decode_json_obj(list<T>& l, JSONObj *obj)
 }
 
 template<class T>
-void JSONDecoder::decode_json(const string& name, T& val, JSONObj *obj)
+bool JSONDecoder::decode_json(const string& name, T& val, JSONObj *obj, bool mandatory)
 {
   JSONObjIter iter = obj->find_first(name);
   if (iter.end()) {
-    throw err();
+    if (mandatory) {
+      string s = "missing mandatory field " + name;
+      throw err(s);
+    }
+    return false;
   }
 
-  decode_json_obj(val, *iter);
+  try {
+    decode_json_obj(val, *iter);
+  } catch (err& e) {
+    string s = name + ": ";
+    s.append(e.message);
+    throw err(s);
+  }
+
+  return true;
+}
+
+template<class T>
+void JSONDecoder::decode_json(const string& name, T& val, T& default_val, JSONObj *obj)
+{
+  JSONObjIter iter = obj->find_first(name);
+  if (iter.end()) {
+    val = default_val;
+    return;
+  }
+
+  try {
+    decode_json_obj(val, *iter);
+  } catch (err& e) {
+    val = default_val;
+    string s = name + ": ";
+    s.append(e.message);
+    throw err(s);
+  }
 }
 
 #endif
