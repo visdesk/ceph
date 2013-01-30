@@ -12,6 +12,9 @@
  * 
  */
 
+#include <boost/lexical_cast.hpp>
+#include "include/assert.h"  // lexical_cast includes system assert.h
+
 #include "MDS.h"
 #include "Server.h"
 #include "Locker.h"
@@ -51,8 +54,6 @@
 #include "common/perf_counters.h"
 #include "include/compat.h"
 #include "osd/OSDMap.h"
-
-#include <boost/lexical_cast.hpp>
 
 #include <errno.h>
 #include <fcntl.h>
