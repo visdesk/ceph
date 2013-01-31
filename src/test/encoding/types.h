@@ -119,9 +119,10 @@ TYPE_FEATUREFUL(MDSMap::mds_info_t)
 
 #include "mds/events/ECommitted.h"
 TYPE(ECommitted)
-
 #include "mds/events/EExport.h"
 TYPE(EExport)
+#include "mds/events/EFragment.h"
+TYPE(EFragment)
 
 #ifdef WITH_RADOSGW
 
