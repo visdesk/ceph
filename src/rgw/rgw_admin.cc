@@ -314,63 +314,6 @@ string escape_str(string& src, char c)
 static void show_user_info(RGWUserInfo& info, Formatter *formatter)
 {
   info.dump(formatter);
-#if 0
-  map<string, RGWAccessKey>::iterator kiter;
-  map<string, RGWSubUser>::iterator uiter;
-
-
-  formatter->open_object_section("user_info");
-
-  formatter->dump_string("user_id", info.user_id);
-  formatter->dump_string("display_name", info.display_name);
-  formatter->dump_string("email", info.user_email);
-  formatter->dump_int("suspended", (int)info.suspended);
-  formatter->dump_int("max_buckets", (int)info.max_buckets);
-
-  // subusers
-  formatter->open_array_section("subusers");
-  for (uiter = info.subusers.begin(); uiter != info.subusers.end(); ++uiter) {
-    RGWSubUser& u = uiter->second;
-    formatter->open_object_section("user");
-    formatter->dump_format("id", "%s:%s", info.user_id.c_str(), u.name.c_str());
-    char buf[256];
-    perm_to_str(u.perm_mask, buf, sizeof(buf));
-    formatter->dump_string("permissions", buf);
-    formatter->close_section();
-    formatter->flush(cout);
-  }
-  formatter->close_section();
-
-  // keys
-  formatter->open_array_section("keys");
-  for (kiter = info.access_keys.begin(); kiter != info.access_keys.end(); ++kiter) {
-    RGWAccessKey& k = kiter->second;
-    const char *sep = (k.subuser.empty() ? "" : ":");
-    const char *subuser = (k.subuser.empty() ? "" : k.subuser.c_str());
-    formatter->open_object_section("key");
-    formatter->dump_format("user", "%s%s%s", info.user_id.c_str(), sep, subuser);
-    formatter->dump_string("access_key", k.id);
-    formatter->dump_string("secret_key", k.key);
-    formatter->close_section();
-  }
-  formatter->close_section();
-
-  formatter->open_array_section("swift_keys");
-  for (kiter = info.swift_keys.begin(); kiter != info.swift_keys.end(); ++kiter) {
-    RGWAccessKey& k = kiter->second;
-    const char *sep = (k.subuser.empty() ? "" : ":");
-    const char *subuser = (k.subuser.empty() ? "" : k.subuser.c_str());
-    formatter->open_object_section("key");
-    formatter->dump_format("user", "%s%s%s", info.user_id.c_str(), sep, subuser);
-    formatter->dump_string("secret_key", k.key);
-    formatter->close_section();
-  }
-  formatter->close_section();
-
-  info.caps.dump(formatter);
-
-  formatter->close_section();
-#endif
   formatter->flush(cout);
   cout << std::endl;
 
