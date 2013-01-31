@@ -2324,7 +2324,7 @@ void PG::write_info(ObjectStore::Transaction& t)
 {
   // pg state
   bufferlist infobl;
-  __u8 struct_v = 6;
+  __u8 struct_v = 7;
   ::encode(struct_v, infobl);
   ::encode(get_osdmap()->get_epoch(), infobl);
 
@@ -2334,8 +2334,10 @@ void PG::write_info(ObjectStore::Transaction& t)
   ::encode(info, infobl);
   purged_snaps.swap(info.purged_snaps);
 
-  t.collection_setattr(coll, "info", infobl);
- 
+  map<string, bufferlist> newattrs;
+  newattrs[string("info")] = infobl;
+  t.omap_setkeys(coll_t::META_COLL, biginfo_oid, newattrs);
+
   if (dirty_big_info) {
     // potentially big stuff
     bufferlist bigbl;
@@ -2351,13 +2353,35 @@ void PG::write_info(ObjectStore::Transaction& t)
   dirty_big_info = false;
 }
 
-epoch_t PG::peek_map_epoch(ObjectStore *store, coll_t coll, bufferlist *bl)
+epoch_t PG::peek_map_epoch(ObjectStore *store, coll_t coll, const hobject_t &biginfo_oid , bufferlist *bl)
 {
   assert(bl);
-  store->collection_getattr(coll, "info", *bl);
+  bool found = false;
+
+  bufferlist hdrbl;
+  map<string, bufferlist> keyvals;
+  map<string, bufferlist>::iterator it;
+  int r = store->omap_get(coll_t::META_COLL, biginfo_oid, &hdrbl, &keyvals);
+  if (r >= 0) {
+    it = keyvals.find(string("info"));
+    if (it != keyvals.end()) {
+      *bl = (*it).second;
+      found = true;
+    }
+  }
+
+  //If no omap must be version < 7
+  if (!found) {
+    store->collection_getattr(coll, "info", *bl);
+  }
+
   bufferlist::iterator bp = bl->begin();
   __u8 struct_v = 0;
   ::decode(struct_v, bp);
+  if (found)
+    assert(struct_v >= 7);
+  else
+    assert(struct_v < 7);
   if (struct_v < 5)
     return 0;
   epoch_t cur_epoch = 0;
@@ -2634,9 +2658,11 @@ int PG::read_info(ObjectStore *store, const coll_t coll, bufferlist &bl,
     p = bl.begin();
     ::decode(struct_v, p);
   } else {
-    epoch_t epoch;
-    ::decode(epoch, p);
-    ::decode(info, p);
+    if (struct_v >= 6) {
+      epoch_t epoch;
+      ::decode(epoch, p);
+      ::decode(info, p);
+    }
     bl.clear();
     int r = store->read(coll_t::META_COLL, biginfo_oid, 0, 0, bl);
     if (r < 0)

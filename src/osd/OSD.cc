@@ -1562,7 +1562,8 @@ void OSD::load_pgs()
     }
 
     bufferlist bl;
-    epoch_t map_epoch = PG::peek_map_epoch(store, *it, &bl);
+    hobject_t infooid = make_pg_biginfo_oid(pgid);
+    epoch_t map_epoch = PG::peek_map_epoch(store, *it, infooid, &bl);
 
     PG *pg = _open_lock_pg(map_epoch == 0 ? osdmap : service.get_map(map_epoch), pgid);
 

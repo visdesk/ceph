@@ -200,14 +200,14 @@ int main(int argc, char **argv)
     }
 
     bufferlist bl;
-    epoch_t map_epoch = PG::peek_map_epoch(fs, coll, &bl);
+    hobject_t biginfo_oid = OSD::make_pg_biginfo_oid(pgid);
+    epoch_t map_epoch = PG::peek_map_epoch(fs, coll, biginfo_oid, &bl);
     (void)map_epoch;
 
     found = true;
 
     pg_info_t info;
     map<epoch_t,pg_interval_t> past_intervals;
-    hobject_t biginfo_oid = OSD::make_pg_biginfo_oid(pgid);
     interval_set<snapid_t> snap_collections;
 
     int r = PG::read_info(fs, coll, bl, info, past_intervals, biginfo_oid,

@@ -1789,7 +1789,7 @@ public:
     hobject_t &biginfo_oid, interval_set<snapid_t>  &snap_collections);
   void read_state(ObjectStore *store, bufferlist &bl);
   static epoch_t peek_map_epoch(ObjectStore *store,
-				coll_t coll, bufferlist *bl);
+			coll_t coll, const hobject_t &biginfo_oid, bufferlist *bl);
   coll_t make_snap_collection(ObjectStore::Transaction& t, snapid_t sn);
   void update_snap_collections(vector<pg_log_entry_t> &log_entries,
 			       ObjectStore::Transaction& t);
