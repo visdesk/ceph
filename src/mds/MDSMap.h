@@ -30,6 +30,7 @@ using namespace std;
 #include "common/config.h"
 
 #include "include/CompatSet.h"
+#include "include/ceph_features.h"
 #include "common/Formatter.h"
 
 /*
@@ -481,6 +482,7 @@ public:
   void print_summary(ostream& out);
 
   void dump(Formatter *f) const;
+  static void generate_test_instances(list<MDSMap*>& ls);
 };
 WRITE_CLASS_ENCODER(MDSMap::mds_info_t)
 WRITE_CLASS_ENCODER_FEATURES(MDSMap)
