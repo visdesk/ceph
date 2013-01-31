@@ -2313,6 +2313,8 @@ void PG::init(int role, vector<int>& newup, vector<int>& newacting, pg_history_t
 
 void PG::write_info(ObjectStore::Transaction& t)
 {
+//For performance comparisons don't write info
+#if 0
   // pg state
   bufferlist infobl;
   __u8 struct_v = 5;
@@ -2328,6 +2330,7 @@ void PG::write_info(ObjectStore::Transaction& t)
   dout(20) << "write_info bigbl " << bigbl.length() << dendl;
   t.truncate(coll_t::META_COLL, biginfo_oid, 0);
   t.write(coll_t::META_COLL, biginfo_oid, 0, bigbl.length(), bigbl);
+#endif
 
   dirty_info = false;
 }
