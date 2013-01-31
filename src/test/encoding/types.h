@@ -123,6 +123,8 @@ TYPE(ECommitted)
 TYPE(EExport)
 #include "mds/events/EFragment.h"
 TYPE(EFragment)
+#include "mds/events/EImportFinish.h"
+TYPE(EImportFinish)
 
 #ifdef WITH_RADOSGW
 
