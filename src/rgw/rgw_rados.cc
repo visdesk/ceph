@@ -142,7 +142,7 @@ int RGWRadosParams::store_info(CephContext *cct, RGWRados *store)
 
   bufferlist bl;
   ::encode(*this, bl);
-  int ret = rgw_put_system_obj(store, pool, zone_info_oid, bl.c_str(), bl.length(), true, NULL);
+  int ret = rgw_put_system_obj(store, pool, zone_info_oid, bl.c_str(), bl.length(), false, NULL);
 
   return ret;
 }
