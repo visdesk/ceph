@@ -71,7 +71,7 @@ class UnmountError(ActivateError):
 
 def maybe_mkdir(*a, **kw):
     # remove any symlink, if it is there..
-    if stat.S_ISLNK(os.lstat(*a).st_mode):
+    if os.path.exists(*a) and stat.S_ISLNK(os.lstat(*a).st_mode):
         log.debug('Removing old symlink at %s', *a)
         os.unlink(*a)
     try:
