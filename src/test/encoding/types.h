@@ -127,6 +127,8 @@ TYPE(EFragment)
 TYPE(EImportFinish)
 #include "mds/events/EImportStart.h"
 TYPE(EImportStart)
+#include "mds/events/EMetaBlob.h"
+TYPE(EMetaBlob::fullbit)
 
 #ifdef WITH_RADOSGW
 
