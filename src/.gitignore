@@ -55,6 +55,7 @@
 /xattr_bench
 /rest-bench
 /test_store_tool
+/mon_store_converter
 dev
 mondata
 mnt
