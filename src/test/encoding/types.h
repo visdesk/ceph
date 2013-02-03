@@ -132,6 +132,7 @@ TYPE(EMetaBlob::fullbit)
 TYPE(EMetaBlob::remotebit)
 TYPE(EMetaBlob::nullbit)
 TYPE(EMetaBlob::dirlump)
+TYPE(EMetaBlob)
 
 #ifdef WITH_RADOSGW
 
