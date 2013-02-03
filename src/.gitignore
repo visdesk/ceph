@@ -54,6 +54,7 @@
 /fsconverter
 /xattr_bench
 /rest-bench
+/test_store_tool
 dev
 mondata
 mnt
