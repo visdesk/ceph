@@ -186,7 +186,7 @@ void PGMonitor::update_from_paxos()
       return;
     }
 
-    pg_map.apply_incremental(inc);
+    pg_map.apply_incremental(g_ceph_context, inc);
     
     dout(10) << pg_map << dendl;
 
@@ -258,6 +258,7 @@ void PGMonitor::encode_pending(bufferlist &bl)
 {
   dout(10) << "encode_pending v " << pending_inc.version << dendl;
   assert(paxos->get_version() + 1 == pending_inc.version);
+  pending_inc.stamp = ceph_clock_now(g_ceph_context);
   pending_inc.encode(bl, mon->get_quorum_features());
 }
 
@@ -1329,6 +1330,15 @@ void PGMonitor::get_health(list<pair<health_status_t,string> >& summary,
   
   check_full_osd_health(summary, detail, pg_map.full_osds, "full", HEALTH_ERR);
   check_full_osd_health(summary, detail, pg_map.nearfull_osds, "near full", HEALTH_WARN);
+
+  if (pg_map.pg_sum.stats.sum.num_scrub_errors) {
+    ostringstream ss;
+    ss << pg_map.pg_sum.stats.sum.num_scrub_errors << " scrub errors";
+    summary.push_back(make_pair(HEALTH_ERR, ss.str()));
+    if (detail) {
+      detail->push_back(make_pair(HEALTH_ERR, ss.str()));
+    }
+  }
 }
 
 void PGMonitor::check_full_osd_health(list<pair<health_status_t,string> >& summary,

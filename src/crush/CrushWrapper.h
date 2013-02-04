@@ -97,6 +97,28 @@ public:
   }
 
   // tunables
+  void set_tunables_legacy() {
+    crush->choose_local_tries = 2;
+    crush->choose_local_fallback_tries = 5;
+    crush->choose_total_tries = 19;
+    crush->chooseleaf_descend_once = 0;
+  }
+  void set_tunables_optimal() {
+    crush->choose_local_tries = 0;
+    crush->choose_local_fallback_tries = 0;
+    crush->choose_total_tries = 50;
+    crush->chooseleaf_descend_once = 1;
+  }
+  void set_tunables_argonaut() {
+    set_tunables_legacy();
+  }
+  void set_tunables_bobtail() {
+    set_tunables_optimal();
+  }
+  void set_tunables_default() {
+    set_tunables_legacy();
+  }
+
   int get_choose_local_tries() const {
     return crush->choose_local_tries;
   }
@@ -262,6 +284,7 @@ public:
    * returns the (type, name) of the parent bucket of id
    */
   pair<string,string> get_immediate_parent(int id);
+  int get_immediate_parent_id(int id, int *parent);
 
   /**
    * get the fully qualified location of a device by successively finding
@@ -280,6 +303,13 @@ public:
    */
   map<int, string> get_parent_hierarchy(int id);
 
+  /**
+   * enumerate immediate children of given node
+   *
+   * @param id parent bucket or device id
+   * @return number of items, or error
+   */
+  int get_children(int id, list<int> *children);
 
   /**
    * insert an item into the map at a specific position

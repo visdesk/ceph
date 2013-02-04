@@ -46,6 +46,7 @@
     ceph osd crush move <bucketname> <loc1> [<loc2> ...]
     ceph osd crush create-or-move <osd-id> <initial-weight> <loc1> [<loc2> ...]
     ceph osd crush reweight <name> <weight>
+    ceph osd crush tunables <legacy|argonaut|bobtail|optimal|default>
     ceph osd create [<uuid>]
     ceph osd rm <osd-id> [<osd-id>...]
     ceph osd lost [--yes-i-really-mean-it]
@@ -55,7 +56,7 @@
     ceph osd pool mksnap <pool> <snapname>
     ceph osd pool rmsnap <pool> <snapname>
     ceph osd pool create <pool> <pg_num> [<pgp_num>]
-    ceph osd pool delete <pool>
+    ceph osd pool delete <pool> [<pool> --yes-i-really-really-mean-it]
     ceph osd pool rename <pool> <new pool name>
     ceph osd pool set <pool> <field> <value>
     ceph osd scrub <osd-id>
@@ -73,8 +74,6 @@
     -o <file>        Write out to <file>
     -i <file>        Read input from <file> (for some commands)
     --conf/-c        Read configuration from the given configuration file
-    -d               Run in foreground, log to stderr.
-    -f               Run in foreground, log to usual location.
     --id/-i          set ID portion of my name
     --name/-n        set name (TYPE.ID)
     --version        show version and quit

@@ -110,6 +110,7 @@ public:
     case LOCK_XSYN: return "xsyn";
     case LOCK_XSYN_EXCL: return "xsyn->excl";
     case LOCK_EXCL_XSYN: return "excl->xsyn";
+    case LOCK_XSYN_SYNC: return "xsyn->sync";
 
     case LOCK_SYNC_MIX: return "sync->mix";
     case LOCK_SYNC_MIX2: return "sync->mix(2)";
@@ -273,8 +274,8 @@ public:
   }
   int get_cap_mask() const {
     switch (get_type()) {
-    case CEPH_LOCK_IFILE: return 0xf;
-    default: return 0x3;
+    case CEPH_LOCK_IFILE: return (1 << CEPH_CAP_FILE_BITS) - 1;
+    default: return (1 << CEPH_CAP_SIMPLE_BITS) - 1;
     }
   }
 

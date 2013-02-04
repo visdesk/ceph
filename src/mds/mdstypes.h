@@ -460,6 +460,8 @@ struct fnode_t {
   frag_info_t fragstat, accounted_fragstat;
   nest_info_t rstat, accounted_rstat;
 
+  fnode_t() : version(0), snap_purged_thru(0) {}
+
   void encode(bufferlist &bl) const;
   void decode(bufferlist::iterator& bl);
   void dump(Formatter *f) const;

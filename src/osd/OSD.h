@@ -132,6 +132,7 @@ class AuthAuthorizeHandlerRegistry;
 
 class OpsFlightSocketHook;
 class HistoricOpsSocketHook;
+class TestOpsSocketHook;
 struct C_CompleteSplits;
 
 extern const coll_t meta_coll;
@@ -247,8 +248,6 @@ public:
   int scrubs_active;
   set< pair<utime_t,pg_t> > last_scrub_pg;
 
-  bool scrub_should_schedule();
-
   void reg_last_pg_scrub(pg_t pgid, utime_t t) {
     Mutex::Locker l(sched_scrub_lock);
     last_scrub_pg.insert(pair<utime_t,pg_t>(t, pgid));
@@ -256,17 +255,29 @@ public:
   void unreg_last_pg_scrub(pg_t pgid, utime_t t) {
     Mutex::Locker l(sched_scrub_lock);
     pair<utime_t,pg_t> p(t, pgid);
-    assert(last_scrub_pg.count(p));
-    last_scrub_pg.erase(p);
+    set<pair<utime_t,pg_t> >::iterator it = last_scrub_pg.find(p);
+    assert(it != last_scrub_pg.end());
+    last_scrub_pg.erase(it);
   }
-  bool next_scrub_stamp(pair<utime_t, pg_t> after,
+  bool first_scrub_stamp(pair<utime_t, pg_t> *out) {
+    Mutex::Locker l(sched_scrub_lock);
+    if (last_scrub_pg.size() == 0)
+      return false;
+    set< pair<utime_t, pg_t> >::iterator iter = last_scrub_pg.begin();
+    *out = *iter;
+    return true;
+  }
+  bool next_scrub_stamp(pair<utime_t, pg_t> next,
 			pair<utime_t, pg_t> *out) {
     Mutex::Locker l(sched_scrub_lock);
-    if (last_scrub_pg.size() == 0) return false;
-    set< pair<utime_t, pg_t> >::iterator iter = last_scrub_pg.lower_bound(after);
-    if (iter == last_scrub_pg.end()) return false;
+    if (last_scrub_pg.size() == 0)
+      return false;
+    set< pair<utime_t, pg_t> >::iterator iter = last_scrub_pg.lower_bound(next);
+    if (iter == last_scrub_pg.end())
+      return false;
     ++iter;
-    if (iter == last_scrub_pg.end()) return false;
+    if (iter == last_scrub_pg.end())
+      return false;
     *out = *iter;
     return true;
   }
@@ -383,8 +394,15 @@ public:
 
   OSDService(OSD *osd);
 };
-class OSD : public Dispatcher {
+class OSD : public Dispatcher,
+	    public md_config_obs_t {
   /** OSD **/
+public:
+  // config observer bits
+  virtual const char** get_tracked_conf_keys() const;
+  virtual void handle_conf_change(const struct md_config_t *conf,
+				  const std::set <std::string> &changed);
+
 protected:
   Mutex osd_lock;			// global lock
   SafeTimer timer;    // safe timer (osd_lock)
@@ -422,6 +440,11 @@ protected:
 
   void check_osdmap_features();
 
+  // asok
+  friend class OSDSocketHook;
+  class OSDSocketHook *asok_hook;
+  bool asok_command(string command, string args, ostream& ss);
+
 public:
   ClassHandler  *class_handler;
   int get_nodeid() { return whoami; }
@@ -437,7 +460,7 @@ public:
     return hobject_t(sobject_t(object_t(foo), 0)); 
   }
 
-  hobject_t make_pg_log_oid(pg_t pg) {
+  static hobject_t make_pg_log_oid(pg_t pg) {
     stringstream ss;
     ss << "pglog_" << pg;
     string s;
@@ -445,7 +468,7 @@ public:
     return hobject_t(sobject_t(object_t(s.c_str()), 0));
   }
   
-  hobject_t make_pg_biginfo_oid(pg_t pg) {
+  static hobject_t make_pg_biginfo_oid(pg_t pg) {
     stringstream ss;
     ss << "pginfo_" << pg;
     string s;
@@ -470,6 +493,7 @@ public:
   static const int STATE_BOOTING = 2;
   static const int STATE_ACTIVE = 3;
   static const int STATE_STOPPING = 4;
+  static const int STATE_WAITING_FOR_HEALTHY = 5;
 
 private:
   int state;
@@ -482,6 +506,7 @@ public:
   bool is_booting() { return state == STATE_BOOTING; }
   bool is_active() { return state == STATE_ACTIVE; }
   bool is_stopping() { return state == STATE_STOPPING; }
+  bool is_waiting_for_healthy() { return state == STATE_WAITING_FOR_HEALTHY; }
 
 private:
 
@@ -602,15 +627,10 @@ private:
   // -- op tracking --
   OpTracker op_tracker;
   void check_ops_in_flight();
-  void dump_ops_in_flight(ostream& ss);
-  void dump_historic_ops(ostream& ss) {
-    return op_tracker.dump_historic_ops(ss);
-  }
-  friend class OpsFlightSocketHook;
-  friend class HistoricOpsSocketHook;
+  void test_ops(std::string command, std::string args, ostream& ss);
+  friend class TestOpsSocketHook;
+  TestOpsSocketHook *test_ops_hook;
   friend class C_CompleteSplits;
-  OpsFlightSocketHook *admin_ops_hook;
-  HistoricOpsSocketHook *historic_ops_hook;
 
   // -- op queue --
 
@@ -624,7 +644,15 @@ private:
       : ThreadPool::WorkQueueVal<pair<PGRef, OpRequestRef>, PGRef >(
 	"OSD::OpWQ", ti, ti*10, tp),
 	qlock("OpWQ::qlock"),
-	osd(o) {}
+	osd(o),
+	pqueue(o->cct->_conf->osd_op_pq_max_tokens_per_priority,
+	       o->cct->_conf->osd_op_pq_min_cost)
+    {}
+
+    void dump(Formatter *f) {
+      Mutex::Locker l(qlock);
+      pqueue.dump(f);
+    }
 
     void _enqueue_front(pair<PGRef, OpRequestRef> item);
     void _enqueue(pair<PGRef, OpRequestRef> item);
@@ -713,8 +741,10 @@ private:
       }
       in_use.insert(got.begin(), got.end());
     }
-    void _process(const list<PG *> &pgs) {
-      osd->process_peering_events(pgs);
+    void _process(
+      const list<PG *> &pgs,
+      ThreadPool::TPHandle &handle) {
+      osd->process_peering_events(pgs, handle);
       for (list<PG *>::const_iterator i = pgs.begin();
 	   i != pgs.end();
 	   ++i) {
@@ -733,7 +763,9 @@ private:
     }
   } peering_wq;
 
-  void process_peering_events(const list<PG*> &pg);
+  void process_peering_events(
+    const list<PG*> &pg,
+    ThreadPool::TPHandle &handle);
 
   friend class PG;
   friend class ReplicatedPG;
@@ -757,7 +789,7 @@ private:
   epoch_t note_peer_epoch(int p, epoch_t e);
   void forget_peer_epoch(int p, epoch_t e);
 
-  bool _share_map_incoming(const entity_inst_t& inst, epoch_t epoch,
+  bool _share_map_incoming(entity_name_t name, Connection *con, epoch_t epoch,
 			   Session *session = 0);
   void _share_map_outgoing(int peer, Connection *con,
 			   OSDMapRef map = OSDMapRef());
@@ -768,8 +800,11 @@ private:
   void note_up_osd(int osd);
   
   void advance_pg(
-    epoch_t advance_to, PG *pg, PG::RecoveryCtx *rctx,
-    set<boost::intrusive_ptr<PG> > *split_pgs);
+    epoch_t advance_to, PG *pg,
+    ThreadPool::TPHandle &handle,
+    PG::RecoveryCtx *rctx,
+    set<boost::intrusive_ptr<PG> > *split_pgs
+  );
   void advance_map(ObjectStore::Transaction& t, C_Contexts *tfin);
   void consume_map();
   void activate_map();
@@ -801,9 +836,7 @@ private:
   }
 
   MOSDMap *build_incremental_map_msg(epoch_t from, epoch_t to);
-  void send_incremental_map(epoch_t since, const entity_inst_t& inst, bool lazy=false);
   void send_incremental_map(epoch_t since, Connection *con);
-  void send_map(MOSDMap *m, const entity_inst_t& inst, bool lazy);
   void send_map(MOSDMap *m, Connection *con);
 
 protected:
@@ -1175,8 +1208,10 @@ protected:
 
   // -- scrubbing --
   void sched_scrub();
-  xlist<PG*> scrub_queue;
+  bool scrub_random_backoff();
+  bool scrub_should_schedule();
 
+  xlist<PG*> scrub_queue;
 
   struct ScrubWQ : public ThreadPool::WorkQueue<PG> {
     OSD *osd;

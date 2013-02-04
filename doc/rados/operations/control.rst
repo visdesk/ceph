@@ -58,14 +58,14 @@ Placement Group Subsystem
 
 To display the statistics for all placement groups, execute the following:: 
 
-	ceph -- pg dump [--format {format}]
+	ceph pg dump [--format {format}]
 
 The valid formats are ``plain`` (default) and ``json``.
 
 To display the statistics for all placement groups stuck in a specified state, 
 execute the following:: 
 
-	ceph -- pg dump_stuck inactive|unclean|stale [--format {format}] [-t|--threshold {seconds}]
+	ceph pg dump_stuck inactive|unclean|stale [--format {format}] [-t|--threshold {seconds}]
 
 
 ``--format`` may be ``plain`` (default) or ``json``
@@ -124,7 +124,7 @@ and state. ::
 
 Find out where a specific object is or would be stored in the system::
 
-        ceph osd map <pool-name> <object-name>
+	ceph osd map <pool-name> <object-name>
 
 Add or move a new item (OSD) with the given id/name/weight at the specified
 location. ::
@@ -237,8 +237,8 @@ Creates/deletes a snapshot of a pool. ::
 Creates/deletes/renames a storage pool. ::
 
 	ceph osd pool create {pool-name} pg_num [pgp_num]
-	ceph osd pool delete {pool-name}
-   ceph osd pool rename {old-name} {new-name}
+	ceph osd pool delete {pool-name} [{pool-name} --yes-i-really-really-mean-it]
+	ceph osd pool rename {old-name} {new-name}
 
 Changes a pool setting. :: 
 

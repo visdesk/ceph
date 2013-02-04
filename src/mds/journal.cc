@@ -144,7 +144,7 @@ void LogSegment::try_to_expire(MDS *mds, C_GatherBuilder &gather_bld)
       CInode *in = *p;
       assert(in->last == CEPH_NOSNAP);
       ++p;
-      if (in->is_any_caps()) {
+      if (in->is_auth() && in->is_any_caps()) {
 	if (in->is_any_caps_wanted()) {
 	  dout(20) << "try_to_expire requeueing open file " << *in << dendl;
 	  if (!le) {
@@ -268,8 +268,7 @@ void LogSegment::try_to_expire(MDS *mds, C_GatherBuilder &gather_bld)
 // -----------------------
 // EMetaBlob
 
-EMetaBlob::EMetaBlob(MDLog *mdlog) : root(NULL),
-				     opened_ino(0), renamed_dirino(0),
+EMetaBlob::EMetaBlob(MDLog *mdlog) : opened_ino(0), renamed_dirino(0),
 				     inotablev(0), sessionmapv(0),
 				     allocated_ino(0),
 				     last_subtree_map(mdlog ? mdlog->get_last_segment_offset() : 0),
@@ -349,8 +348,10 @@ void EMetaBlob::add_dir_context(CDir *dir, int mode)
   parents.splice(parents.begin(), maybe);
 
   dout(20) << "EMetaBlob::add_dir_context final: " << parents << dendl;
-  for (list<CDentry*>::iterator p = parents.begin(); p != parents.end(); p++)
+  for (list<CDentry*>::iterator p = parents.begin(); p != parents.end(); p++) {
+    assert((*p)->get_projected_linkage()->is_primary());
     add_dentry(*p, false);
+  }
 }
 
 void EMetaBlob::update_segment(LogSegment *ls)
@@ -721,13 +722,11 @@ void EMetaBlob::dirlump::generate_test_instances(list<dirlump*>& ls)
  */
 void EMetaBlob::encode(bufferlist& bl) const
 {
-  ENCODE_START(4, 4, bl);
+  ENCODE_START(5, 5, bl);
   ::encode(lump_order, bl);
   ::encode(lump_map, bl);
   bufferlist rootbl;
-  if (root)
-    root->encode(rootbl);
-  ::encode(rootbl, bl);
+  ::encode(roots, bl);
   ::encode(table_tids, bl);
   ::encode(opened_ino, bl);
   ::encode(allocated_ino, bl);
@@ -746,14 +745,18 @@ void EMetaBlob::encode(bufferlist& bl) const
 }
 void EMetaBlob::decode(bufferlist::iterator &bl)
 {
-  DECODE_START_LEGACY_COMPAT_LEN(4, 4, 4, bl);
+  DECODE_START_LEGACY_COMPAT_LEN(5, 5, 5, bl);
   ::decode(lump_order, bl);
   ::decode(lump_map, bl);
-  bufferlist rootbl;
-  ::decode(rootbl, bl);
-  if (rootbl.length()) {
-    bufferlist::iterator p = rootbl.begin();
-    root = new fullbit(p);
+  if (struct_v >= 4) {
+    ::decode(roots, bl);
+  } else {
+    bufferlist rootbl;
+    ::decode(rootbl, bl);
+    if (rootbl.length()) {
+      bufferlist::iterator p = rootbl.begin();
+      roots.push_back(std::tr1::shared_ptr<fullbit>(new fullbit(p)));
+    }
   }
   ::decode(table_tids, bl);
   ::decode(opened_ino, bl);
@@ -799,11 +802,12 @@ void EMetaBlob::dump(Formatter *f) const
   }
   f->close_section(); // lumps
   
-  f->open_object_section("root fullbit");
-  if (root)
-    root->dump(f);
-  else f->dump_string("empty", "empty");
-  f->close_section(); // root fullbit
+  f->open_array_section("roots");
+  for (list<std::tr1::shared_ptr<fullbit> >::const_iterator i = roots.begin();
+       i != roots.end(); ++i) {
+    (*i)->dump(f);
+  }
+  f->close_section(); // roots
 
   f->open_array_section("tableclient tranactions");
   for (list<pair<__u8,version_t> >::const_iterator i = table_tids.begin();
@@ -874,21 +878,21 @@ void EMetaBlob::generate_test_instances(list<EMetaBlob*>& ls)
   ls.push_back(new EMetaBlob());
 }
 
-void EMetaBlob::replay(MDS *mds, LogSegment *logseg)
+void EMetaBlob::replay(MDS *mds, LogSegment *logseg, MDSlaveUpdate *slaveup)
 {
   dout(10) << "EMetaBlob.replay " << lump_map.size() << " dirlumps by " << client_name << dendl;
 
   assert(logseg);
 
-  if (root) {
-    CInode *in = mds->mdcache->get_inode(root->inode.ino);
+  for (list<std::tr1::shared_ptr<fullbit> >::iterator p = roots.begin(); p != roots.end(); p++) {
+    CInode *in = mds->mdcache->get_inode((*p)->inode.ino);
     bool isnew = in ? false:true;
     if (!in)
       in = new CInode(mds->mdcache, true);
-    root->update_inode(mds, in);
+    (*p)->update_inode(mds, in);
     if (isnew)
       mds->mdcache->add_inode(in);
-    if (root->dirty) in->_mark_dirty(logseg);
+    if ((*p)->dirty) in->_mark_dirty(logseg);
     dout(10) << "EMetaBlob.replay " << (isnew ? " added root ":" updated root ") << *in << dendl;    
   }
 
@@ -900,10 +904,21 @@ void EMetaBlob::replay(MDS *mds, LogSegment *logseg)
       dout(10) << "EMetaBlob.replay renamed inode is " << *renamed_diri << dendl;
     else
       dout(10) << "EMetaBlob.replay don't have renamed ino " << renamed_dirino << dendl;
+
+    int nnull = 0;
+    for (list<dirfrag_t>::iterator lp = lump_order.begin(); lp != lump_order.end(); ++lp) {
+      dirlump &lump = lump_map[*lp];
+      if (lump.nnull) {
+	dout(10) << "EMetaBlob.replay found null dentry in dir " << *lp << dendl;
+	nnull += lump.nnull;
+      }
+    }
+    assert(nnull <= 1);
   }
 
   // keep track of any inodes we unlink and don't relink elsewhere
-  set<CInode*> unlinked;
+  map<CInode*, CDir*> unlinked;
+  set<CInode*> linked;
 
   // walk through my dirs (in order!)
   for (list<dirfrag_t>::iterator lp = lump_order.begin();
@@ -962,6 +977,8 @@ void EMetaBlob::replay(MDS *mds, LogSegment *logseg)
       dir->mark_new(logseg);
     if (lump.is_complete())
       dir->mark_complete();
+    else if (lump.is_importing())
+      dir->state_clear(CDir::STATE_COMPLETE);
     
     dout(10) << "EMetaBlob.replay updated dir " << *dir << dendl;  
 
@@ -994,38 +1011,44 @@ void EMetaBlob::replay(MDS *mds, LogSegment *logseg)
 	mds->mdcache->add_inode(in);
 	if (!dn->get_linkage()->is_null()) {
 	  if (dn->get_linkage()->is_primary()) {
-	    CInode *old_in = dn->get_linkage()->get_inode();
+	    unlinked[dn->get_linkage()->get_inode()] = dir;
 	    stringstream ss;
 	    ss << "EMetaBlob.replay FIXME had dentry linked to wrong inode " << *dn
-	        << " " << *old_in
-	        << " should be " << p->inode.ino;
+	       << " " << *dn->get_linkage()->get_inode() << " should be " << p->inode.ino;
 	    dout(0) << ss.str() << dendl;
 	    mds->clog.warn(ss);
-	    dir->unlink_inode(dn);
-	    mds->mdcache->remove_inode_recursive(old_in);
-
-	    //assert(0); // hrm!  fallout from sloppy unlink?  or?  hmmm FIXME investigate further
 	  }
+	  dir->unlink_inode(dn);
 	}
-	unlinked.erase(in);
+	if (unlinked.count(in))
+	  linked.insert(in);
 	dir->link_primary_inode(dn, in);
 	if (p->dirty) in->_mark_dirty(logseg);
 	dout(10) << "EMetaBlob.replay added " << *in << dendl;
       } else {
 	if (dn->get_linkage()->get_inode() != in && in->get_parent_dn()) {
 	  dout(10) << "EMetaBlob.replay unlinking " << *in << dendl;
-	  if (in == renamed_diri)
-	    olddir = in->get_parent_dn()->get_dir();
-	  in->get_parent_dn()->get_dir()->unlink_inode(in->get_parent_dn());
+	  unlinked[in] = in->get_parent_dir();
+	  in->get_parent_dir()->unlink_inode(in->get_parent_dn());
 	}
 	if (in->get_parent_dn() && in->inode.anchored != p->inode.anchored)
 	  in->get_parent_dn()->adjust_nested_anchors( (int)p->inode.anchored - (int)in->inode.anchored );
 	p->update_inode(mds, in);
 	if (p->dirty) in->_mark_dirty(logseg);
 	if (dn->get_linkage()->get_inode() != in) {
-	  if (!dn->get_linkage()->is_null())  // note: might be remote.  as with stray reintegration.
+	  if (!dn->get_linkage()->is_null()) { // note: might be remote.  as with stray reintegration.
+	    if (dn->get_linkage()->is_primary()) {
+	      unlinked[dn->get_linkage()->get_inode()] = dir;
+	      stringstream ss;
+	      ss << "EMetaBlob.replay FIXME had dentry linked to wrong inode " << *dn
+		 << " " << *dn->get_linkage()->get_inode() << " should be " << p->inode.ino;
+	      dout(0) << ss.str() << dendl;
+	      mds->clog.warn(ss);
+	    }
 	    dir->unlink_inode(dn);
-	  unlinked.erase(in);
+	  }
+	  if (unlinked.count(in))
+	    linked.insert(in);
 	  dir->link_primary_inode(dn, in);
 	  dout(10) << "EMetaBlob.replay linked " << *in << dendl;
 	} else {
@@ -1049,10 +1072,13 @@ void EMetaBlob::replay(MDS *mds, LogSegment *logseg)
       } else {
 	if (!dn->get_linkage()->is_null()) {
 	  dout(10) << "EMetaBlob.replay unlinking " << *dn << dendl;
-	  if (dn->get_linkage()->is_primary())
-	    unlinked.insert(dn->get_linkage()->get_inode());
-	  if (dn->get_linkage()->get_inode() == renamed_diri)
-	    olddir = dir;
+	  if (dn->get_linkage()->is_primary()) {
+	    unlinked[dn->get_linkage()->get_inode()] = dir;
+	    stringstream ss;
+	    ss << "EMetaBlob.replay FIXME had dentry linked to wrong inode " << *dn
+	       << " " << *dn->get_linkage()->get_inode() << " should be remote " << p->ino;
+	    dout(0) << ss.str() << dendl;
+	  }
 	  dir->unlink_inode(dn);
 	}
 	dir->link_remote_inode(dn, p->ino, p->d_type);
@@ -1079,9 +1105,7 @@ void EMetaBlob::replay(MDS *mds, LogSegment *logseg)
 	if (!dn->get_linkage()->is_null()) {
 	  dout(10) << "EMetaBlob.replay unlinking " << *dn << dendl;
 	  if (dn->get_linkage()->is_primary())
-	    unlinked.insert(dn->get_linkage()->get_inode());
-	  if (dn->get_linkage()->get_inode() == renamed_diri)
-	    olddir = dir;
+	    unlinked[dn->get_linkage()->get_inode()] = dir;
 	  dir->unlink_inode(dn);
 	}
 	dn->set_version(p->dnv);
@@ -1089,24 +1113,40 @@ void EMetaBlob::replay(MDS *mds, LogSegment *logseg)
 	dout(10) << "EMetaBlob.replay had " << *dn << dendl;
 	assert(dn->last == p->dnlast);
       }
+      olddir = dir;
     }
   }
 
   if (renamed_dirino) {
+    if (renamed_diri) {
+      assert(unlinked.count(renamed_diri));
+      assert(linked.count(renamed_diri));
+      olddir = unlinked[renamed_diri];
+    } else {
+      // we imported a diri we haven't seen before
+      renamed_diri = mds->mdcache->get_inode(renamed_dirino);
+      assert(renamed_diri);  // it was in the metablob
+    }
+
     if (olddir) {
-      assert(renamed_diri);
+      if (olddir->authority() != CDIR_AUTH_UNDEF &&
+	  renamed_diri->authority() == CDIR_AUTH_UNDEF) {
+	list<frag_t> leaves;
+	renamed_diri->dirfragtree.get_leaves(leaves);
+	for (list<frag_t>::iterator p = leaves.begin(); p != leaves.end(); ++p)
+	  renamed_diri->get_or_open_dirfrag(mds->mdcache, *p);
+      }
+
       mds->mdcache->adjust_subtree_after_rename(renamed_diri, olddir, false);
       
       // see if we can discard the subtree we renamed out of
       CDir *root = mds->mdcache->get_subtree_root(olddir);
-      if (root->get_dir_auth() == CDIR_AUTH_UNDEF)
-	mds->mdcache->try_trim_non_auth_subtree(root);
-
-    } else {
-      // we imported a diri we haven't seen before
-      assert(!renamed_diri);
-      renamed_diri = mds->mdcache->get_inode(renamed_dirino);
-      assert(renamed_diri);  // it was in the metablob
+      if (root->get_dir_auth() == CDIR_AUTH_UNDEF) {
+	if (slaveup) // preserve the old dir until slave commit
+	  slaveup->rename_olddir = olddir;
+	else
+	  mds->mdcache->try_trim_non_auth_subtree(root);
+      }
     }
 
     // if we are the srci importer, we'll also have some dirfrags we have to open up...
@@ -1124,12 +1164,27 @@ void EMetaBlob::replay(MDS *mds, LogSegment *logseg)
 	mds->mdcache->adjust_subtree_auth(dir, CDIR_AUTH_UNDEF, false);
       }
     }
+
+    // rename may overwrite an empty directory and move it into stray dir.
+    unlinked.erase(renamed_diri);
+    for (map<CInode*, CDir*>::iterator p = unlinked.begin(); p != unlinked.end(); ++p) {
+      if (!linked.count(p->first))
+	continue;
+      assert(p->first->is_dir());
+      mds->mdcache->adjust_subtree_after_rename(p->first, p->second, false);
+    }
   }
 
   if (!unlinked.empty()) {
+    for (set<CInode*>::iterator p = linked.begin(); p != linked.end(); p++)
+      unlinked.erase(*p);
     dout(10) << " unlinked set contains " << unlinked << dendl;
-    for (set<CInode*>::iterator p = unlinked.begin(); p != unlinked.end(); ++p)
-      mds->mdcache->remove_inode_recursive(*p);
+    for (map<CInode*, CDir*>::iterator p = unlinked.begin(); p != unlinked.end(); ++p) {
+      if (slaveup) // preserve unlinked inodes until slave commit
+	slaveup->unlinked.insert(p->first);
+      else
+	mds->mdcache->remove_inode_recursive(p->first);
+    }
   }
 
   // table client transactions
@@ -2035,23 +2090,21 @@ void ESlaveUpdate::generate_test_instances(list<ESlaveUpdate*>& ls)
 
 void ESlaveUpdate::replay(MDS *mds)
 {
+  MDSlaveUpdate *su;
   switch (op) {
   case ESlaveUpdate::OP_PREPARE:
     dout(10) << "ESlaveUpdate.replay prepare " << reqid << " for mds." << master 
 	     << ": applying commit, saving rollback info" << dendl;
-    assert(mds->mdcache->uncommitted_slave_updates[master].count(reqid) == 0);
-    commit.replay(mds, _segment);
-    mds->mdcache->uncommitted_slave_updates[master][reqid] = 
-      new MDSlaveUpdate(origop, rollback, _segment->slave_updates);
+    su = new MDSlaveUpdate(origop, rollback, _segment->slave_updates);
+    commit.replay(mds, _segment, su);
+    mds->mdcache->add_uncommitted_slave_update(reqid, master, su);
     break;
 
   case ESlaveUpdate::OP_COMMIT:
-    if (mds->mdcache->uncommitted_slave_updates[master].count(reqid)) {
+    su = mds->mdcache->get_uncommitted_slave_update(reqid, master);
+    if (su) {
       dout(10) << "ESlaveUpdate.replay commit " << reqid << " for mds." << master << dendl;
-      delete mds->mdcache->uncommitted_slave_updates[master][reqid];
-      mds->mdcache->uncommitted_slave_updates[master].erase(reqid);
-      if (mds->mdcache->uncommitted_slave_updates[master].empty())
-	mds->mdcache->uncommitted_slave_updates.erase(master);
+      mds->mdcache->finish_uncommitted_slave_update(reqid, master);
     } else {
       dout(10) << "ESlaveUpdate.replay commit " << reqid << " for mds." << master 
 	       << ": ignoring, no previously saved prepare" << dendl;
@@ -2059,19 +2112,12 @@ void ESlaveUpdate::replay(MDS *mds)
     break;
 
   case ESlaveUpdate::OP_ROLLBACK:
-    if (mds->mdcache->uncommitted_slave_updates[master].count(reqid)) {
-      dout(10) << "ESlaveUpdate.replay abort " << reqid << " for mds." << master
-	       << ": applying rollback commit blob" << dendl;
-      assert(mds->mdcache->uncommitted_slave_updates[master].count(reqid));
-      commit.replay(mds, _segment);
-      delete mds->mdcache->uncommitted_slave_updates[master][reqid];
-      mds->mdcache->uncommitted_slave_updates[master].erase(reqid);
-      if (mds->mdcache->uncommitted_slave_updates[master].empty())
-	mds->mdcache->uncommitted_slave_updates.erase(master);
-    } else {
-      dout(10) << "ESlaveUpdate.replay abort " << reqid << " for mds." << master 
-	       << ": ignoring, no previously saved prepare" << dendl;
-    }
+    dout(10) << "ESlaveUpdate.replay abort " << reqid << " for mds." << master
+	     << ": applying rollback commit blob" << dendl;
+    su = mds->mdcache->get_uncommitted_slave_update(reqid, master);
+    if (su)
+      mds->mdcache->finish_uncommitted_slave_update(reqid, master);
+    commit.replay(mds, _segment);
     break;
 
   default:

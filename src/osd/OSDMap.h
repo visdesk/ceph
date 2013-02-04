@@ -316,6 +316,12 @@ private:
   bool is_in(int osd) const {
     return exists(osd) && !is_out(osd);
   }
+
+  /**
+   * check if an entire crush subtre is down
+   */
+  bool subtree_is_down(int id, set<int> *down_cache) const;
+  bool containing_subtree_is_down(CephContext *cct, int osd, int subtree_type, set<int> *down_cache) const;
   
   int identify_osd(const entity_addr_t& addr) const;
   int identify_osd(const uuid_d& u) const;
@@ -444,10 +450,14 @@ public:
   void pg_to_raw_up(pg_t pg, vector<int>& up) const;
   void pg_to_up_acting_osds(pg_t pg, vector<int>& up, vector<int>& acting) const;
 
-  int64_t lookup_pg_pool_name(const char *name) {
+  int64_t lookup_pg_pool_name(const string& name) {
     if (name_pool.count(name))
       return name_pool[name];
     return -ENOENT;
+  }
+
+  int64_t const_lookup_pg_pool_name(const char *name) const {
+    return const_cast<OSDMap *>(this)->lookup_pg_pool_name(name);
   }
 
   int64_t get_pool_max() const {

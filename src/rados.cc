@@ -58,7 +58,8 @@ void usage(ostream& out)
 "   mkpool <pool-name> [123[ 4]]     create pool <pool-name>'\n"
 "                                    [with auid 123[and using crush rule 4]]\n"
 "   cppool <pool-name> <dest-pool>   copy content of a pool\n"
-"   rmpool <pool-name>               remove pool <pool-name>'\n"
+"   rmpool <pool-name> [<pool-name> --yes-i-really-really-mean-it]\n"
+"                                    remove pool <pool-name>'\n"
 "   df                               show per-pool and total usage\n"
 "   ls                               list objects in pool\n\n"
 "   chown 123                        change the pool owner to auid 123\n"
@@ -87,11 +88,11 @@ void usage(ostream& out)
 "   cleanup <prefix>                 clean up a previous benchmark operation\n"
 "   load-gen [options]               generate load on the cluster\n"
 "   listomapkeys <obj-name>          list the keys in the object map\n"
+"   listomapvals <obj-name>          list the keys and vals in the object map \n"
 "   getomapval <obj-name> <key>      show the value for the specified key\n"
 "                                    in the object's object map\n"
 "   setomapval <obj-name> <key> <val>\n"
-"   listomapvals <obj-name> <key> <val>\n"
-"   rmomapkey <obj-name> <key> <val>\n"
+"   rmomapkey <obj-name> <key>\n"
 "   getomapheader <obj-name>\n"
 "   setomapheader <obj-name> <val>\n"
 "\n"
@@ -170,22 +171,41 @@ static void usage_exit()
   exit(1);
 }
 
-static int do_get(IoCtx& io_ctx, const char *objname, const char *outfile, bool check_stdio)
+static int do_get(IoCtx& io_ctx, const char *objname, const char *outfile, unsigned op_size)
 {
   string oid(objname);
-  bufferlist outdata;
-  int ret = io_ctx.read(oid, outdata, 0, 0);
-  if (ret < 0) {
-    return ret;
-  }
 
-  if (check_stdio && strcmp(outfile, "-") == 0) {
-    fwrite(outdata.c_str(), outdata.length(), 1, stdout);
+  int fd;
+  if (strcmp(outfile, "-") == 0) {
+    fd = 1;
   } else {
-    outdata.write_file(outfile);
-    generic_dout(0) << "wrote " << outdata.length() << " byte payload to " << outfile << dendl;
+    fd = TEMP_FAILURE_RETRY(::open(outfile, O_WRONLY|O_CREAT|O_TRUNC, 0644));
+    if (fd < 0) {
+      int err = errno;
+      cerr << "failed to open file: " << cpp_strerror(err) << std::endl;
+      return -err;
+    }
   }
 
+  uint64_t offset = 0;
+  while (true) {
+    bufferlist outdata;
+    int ret = io_ctx.read(oid, outdata, op_size, offset);
+    if (ret <= 0) {
+      return ret;
+    }
+    ret = outdata.write_fd(fd);
+    if (ret < 0) {
+      cerr << "error writing to file: " << cpp_strerror(ret) << std::endl;
+      return ret;
+    }
+    if (outdata.length() < op_size)
+      break;
+    offset += outdata.length();
+  }
+
+  if (fd != 1)
+    TEMP_FAILURE_RETRY(::close(fd));
   return 0;
 }
 
@@ -316,12 +336,12 @@ static int do_copy_pool(Rados& rados, const char *src_pool, const char *target_p
   return 0;
 }
 
-static int do_put(IoCtx& io_ctx, const char *objname, const char *infile, int op_size, bool check_stdio)
+static int do_put(IoCtx& io_ctx, const char *objname, const char *infile, int op_size)
 {
   string oid(objname);
   bufferlist indata;
   bool stdio = false;
-  if (check_stdio && strcmp(infile, "-") == 0)
+  if (strcmp(infile, "-") == 0)
     stdio = true;
 
   int ret;
@@ -1385,7 +1405,7 @@ static int rados_tool_common(const std::map < std::string, std::string > &opts,
   else if (strcmp(nargs[0], "get") == 0) {
     if (!pool_name || nargs.size() < 3)
       usage_exit();
-    ret = do_get(io_ctx, nargs[1], nargs[2], true);
+    ret = do_get(io_ctx, nargs[1], nargs[2], op_size);
     if (ret < 0) {
       cerr << "error getting " << pool_name << "/" << nargs[1] << ": " << strerror_r(-ret, buf, sizeof(buf)) << std::endl;
       return 1;
@@ -1394,7 +1414,7 @@ static int rados_tool_common(const std::map < std::string, std::string > &opts,
   else if (strcmp(nargs[0], "put") == 0) {
     if (!pool_name || nargs.size() < 3)
       usage_exit();
-    ret = do_put(io_ctx, nargs[1], nargs[2], op_size, true);
+    ret = do_put(io_ctx, nargs[1], nargs[2], op_size);
     if (ret < 0) {
       cerr << "error putting " << pool_name << "/" << nargs[1] << ": " << strerror_r(-ret, buf, sizeof(buf)) << std::endl;
       return 1;
@@ -1547,9 +1567,11 @@ static int rados_tool_common(const std::map < std::string, std::string > &opts,
 
     string oid(nargs[1]);
     string key(nargs[2]);
+    set<string> keys;
+    keys.insert(key);
 
     map<string, bufferlist> values;
-    ret = io_ctx.omap_get_vals(oid, key, 1, &values);
+    ret = io_ctx.omap_get_vals_by_keys(oid, keys, &values);
     if (ret < 0) {
       cerr << "error getting omap value " << pool_name << "/" << oid << "/"
 	   << key << ": " << cpp_strerror(ret) << std::endl;
@@ -1774,6 +1796,16 @@ static int rados_tool_common(const std::map < std::string, std::string > &opts,
   else if (strcmp(nargs[0], "rmpool") == 0) {
     if (nargs.size() < 2)
       usage_exit();
+    if (nargs.size() < 4 ||
+	strcmp(nargs[1], nargs[2]) != 0 ||
+	strcmp(nargs[3], "--yes-i-really-really-mean-it") != 0) {
+      cerr << "WARNING:\n"
+	   << "  This will PERMANENTLY DESTROY an entire pool of objects with no way back.\n"
+	   << "  To confirm, pass the pool to remove twice, followed by\n"
+	   << "  --yes-i-really-really-mean-it" << std::endl;
+      cout << nargs << std::endl;
+      return 1;
+    }
     ret = rados.pool_delete(nargs[1]);
     if (ret >= 0) {
       cout << "successfully deleted pool " << nargs[1] << std::endl;

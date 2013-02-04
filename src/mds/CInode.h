@@ -252,7 +252,8 @@ public:
   }
 
   ceph_file_layout *get_projected_dir_layout() {
-    if (!inode.is_dir()) return NULL;
+    if (!inode.is_dir())
+      return NULL;
     if (projected_nodes.empty()) {
       if (default_layout)
         return &default_layout->layout;
@@ -261,7 +262,8 @@ public:
     }
     else if (projected_nodes.back()->dir_layout)
       return &projected_nodes.back()->dir_layout->layout;
-    else return NULL;
+    else
+      return NULL;
   }
 
   version_t get_projected_version() {
@@ -498,7 +500,11 @@ private:
     return state_test(STATE_AMBIGUOUSAUTH) ||
       MDSCacheObject::is_ambiguous_auth();
   }
-
+  void set_ambiguous_auth() {
+    state_set(STATE_AMBIGUOUSAUTH);
+  }
+  void clear_ambiguous_auth(list<Context*>& finished);
+  void clear_ambiguous_auth();
 
   inodeno_t ino() const { return inode.ino; }
   vinodeno_t vino() const { return vinodeno_t(inode.ino, last); }

@@ -8,7 +8,8 @@ JAVA_SRC = \
 	java/com/ceph/fs/CephNotMountedException.java \
 	java/com/ceph/fs/CephFileAlreadyExistsException.java \
 	java/com/ceph/fs/CephAlreadyMountedException.java \
-	java/com/ceph/fs/CephNotDirectoryException.java
+	java/com/ceph/fs/CephNotDirectoryException.java \
+	java/com/ceph/fs/CephPoolException.java
 
 JAVA_TEST_SRC = \
   test/com/ceph/fs/CephDoubleMountTest.java \
@@ -43,7 +44,7 @@ $(JAVA_H): $(CEPH_PROXY)
 libcephfs.jar: $(CEPH_PROXY)
 	$(JAR) cf $@ $(JAVA_CLASSES:%=-C java %) 
 
-javadir = $(libdir)
+javadir = $(datadir)/java
 java_DATA = libcephfs.jar
 
 CLEANFILES = -rf java/com/ceph/fs/*.class $(JAVA_H) libcephfs.jar 
@@ -51,7 +52,7 @@ CLEANFILES = -rf java/com/ceph/fs/*.class $(JAVA_H) libcephfs.jar
 BUILT_SOURCES = $(JAVA_H)
 
 # build the tests if *both* --enable-cephfs-java and --with-debug were specifed
-if WITH_DEBUG 
+if HAVE_JUNIT4
 
 JAVA_TEST_CLASSES = $(JAVA_TEST_SRC:test/%.java=%.class)
 ESCAPED_JAVA_TEST_CLASSES = com/ceph/fs/CephAllTests\$$1.class
@@ -68,5 +69,5 @@ libcephfs-test.jar: $(CEPH_TEST_PROXY)
 java_DATA += libcephfs-test.jar
 
 CLEANFILES += test/com/ceph/fs/*.class libcephfs-test.jar
-endif # WITH_DEBUG
+endif # HAVE_JUNIT4 (includes WITH_DEBUG)
 endif #ENABLE_CEPHFS_JAVA

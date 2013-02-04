@@ -812,6 +812,7 @@ public:
       epoch_start(0),
       block_writes(false), active(false), queue_snap_trim(false),
       waiting_on(0), errors(0), fixed(0), active_rep_scrub(0),
+      must_scrub(false), must_deep_scrub(false), must_repair(false),
       finalizing(false), is_chunky(false), state(INACTIVE),
       deep(false)
     {
@@ -833,10 +834,15 @@ public:
     ScrubMap primary_scrubmap;
     map<int,ScrubMap> received_maps;
     MOSDRepScrub *active_rep_scrub;
+    utime_t scrub_reg_stamp;  // stamp we registered for
+
+    // flags to indicate explicitly requested scrubs (by admin)
+    bool must_scrub, must_deep_scrub, must_repair;
 
     // Maps from objects with erros to missing/inconsistent peers
     map<hobject_t, set<int> > missing;
     map<hobject_t, set<int> > inconsistent;
+    map<hobject_t, set<int> > inconsistent_snapcolls;
 
     // Map from object with errors to good peer
     map<hobject_t, pair<ScrubMap::object, int> > authoritative;
@@ -925,6 +931,10 @@ public:
       }
       received_maps.clear();
 
+      must_scrub = false;
+      must_deep_scrub = false;
+      must_repair = false;
+
       state = PG::Scrubber::INACTIVE;
       start = hobject_t();
       end = hobject_t();
@@ -940,9 +950,14 @@ public:
 
   } scrubber;
 
+  bool scrub_after_recovery;
+
   int active_pushes;
 
   void repair_object(const hobject_t& soid, ScrubMap::object *po, int bad_peer, int ok_peer);
+  map<int, ScrubMap *>::const_iterator _select_auth_object(
+    const hobject_t &obj,
+    const map<int,ScrubMap*> &maps);
   bool _compare_scrub_objects(ScrubMap::object &auth,
 			      ScrubMap::object &candidate,
 			      ostream &errorstream);
@@ -950,6 +965,7 @@ public:
 			  map<hobject_t, set<int> > &missing,
 			  map<hobject_t, set<int> > &inconsistent,
 			  map<hobject_t, int> &authoritative,
+			  map<hobject_t, set<int> > &inconsistent_snapcolls,
 			  ostream &errorstream);
   void scrub();
   void classic_scrub();
@@ -973,11 +989,24 @@ public:
   virtual void _scrub_finish() { }
   virtual coll_t get_temp_coll() = 0;
   virtual bool have_temp_coll() = 0;
+  virtual bool _report_snap_collection_errors(
+    const hobject_t &hoid,
+    int osd,
+    const map<string, bufferptr> &attrs,
+    const set<snapid_t> &snapcolls,
+    uint32_t nlinks,
+    ostream &out) { return false; };
+  virtual void check_snap_collections(
+    ino_t hino, const hobject_t &hoid,
+    const map<string, bufferptr> &attrs,
+    set<snapid_t> *snapcolls) {};
   void clear_scrub_reserved();
   void scrub_reserve_replicas();
   void scrub_unreserve_replicas();
   bool scrub_all_replicas_reserved() const;
   bool sched_scrub();
+  void reg_next_scrub();
+  void unreg_next_scrub();
 
   void replica_scrub(class MOSDRepScrub *op);
   void sub_op_scrub_map(OpRequestRef op);
@@ -1020,7 +1049,7 @@ public:
     Formatter *f;
     QueryState(Formatter *f) : f(f) {}
     void print(std::ostream *out) const {
-      *out << "Query" << std::endl;
+      *out << "Query";
     }
   };
 
@@ -1031,9 +1060,7 @@ public:
     MInfoRec(int from, pg_info_t &info, epoch_t msg_epoch) :
       from(from), info(info), msg_epoch(msg_epoch) {}
     void print(std::ostream *out) const {
-      *out << "MInfoRec from " << from
-	   << " info: " << info
-	   << std::endl;
+      *out << "MInfoRec from " << from << " info: " << info;
     }
   };
 
@@ -1043,8 +1070,7 @@ public:
     MLogRec(int from, MOSDPGLog *msg) :
       from(from), msg(msg) {}
     void print(std::ostream *out) const {
-      *out << "MLogRec from " << from
-	   << std::endl;
+      *out << "MLogRec from " << from;
     }
   };
 
@@ -1054,9 +1080,7 @@ public:
     MNotifyRec(int from, pg_notify_t &notify) :
       from(from), notify(notify) {}
     void print(std::ostream *out) const {
-      *out << "MNotifyRec from " << from
-	   << " notify: " << notify
-	   << std::endl;
+      *out << "MNotifyRec from " << from << " notify: " << notify;
     }
   };
 
@@ -1069,8 +1093,7 @@ public:
     void print(std::ostream *out) const {
       *out << "MQuery from " << from
 	   << " query_epoch " << query_epoch
-	   << " query: " << query
-	   << std::endl;
+	   << " query: " << query;
     }
   };
 
@@ -1081,14 +1104,14 @@ public:
     AdvMap(OSDMapRef osdmap, OSDMapRef lastmap, vector<int>& newup, vector<int>& newacting):
       osdmap(osdmap), lastmap(lastmap), newup(newup), newacting(newacting) {}
     void print(std::ostream *out) const {
-      *out << "AdvMap" << std::endl;
+      *out << "AdvMap";
     }
   };
 
   struct ActMap : boost::statechart::event< ActMap > {
     ActMap() : boost::statechart::event< ActMap >() {}
     void print(std::ostream *out) const {
-      *out << "ActMap" << std::endl;
+      *out << "ActMap";
     }
   };
   struct Activate : boost::statechart::event< Activate > {
@@ -1096,13 +1119,13 @@ public:
     Activate(epoch_t q) : boost::statechart::event< Activate >(),
 			  query_epoch(q) {}
     void print(std::ostream *out) const {
-      *out << "Activate from " << query_epoch << std::endl;
+      *out << "Activate from " << query_epoch;
     }
   };
 #define TrivialEvent(T) struct T : boost::statechart::event< T > { \
     T() : boost::statechart::event< T >() {}			   \
     void print(std::ostream *out) const {			   \
-      *out << #T << std::endl;					   \
+      *out << #T;						   \
     }								   \
   };
   TrivialEvent(Initialize)
@@ -1749,13 +1772,18 @@ public:
   void add_log_entry(pg_log_entry_t& e, bufferlist& log_bl);
   void append_log(vector<pg_log_entry_t>& logv, eversion_t trim_to, ObjectStore::Transaction &t);
 
-  void read_log(ObjectStore *store);
+  static void read_log(ObjectStore *store, coll_t coll, hobject_t log_oid,
+    const pg_info_t &info, OndiskLog &ondisklog, IndexedLog &log,
+    pg_missing_t &missing, ostringstream &oss, const PG *passedpg = NULL);
   bool check_log_for_corruption(ObjectStore *store);
   void trim(ObjectStore::Transaction& t, eversion_t v);
   void trim_ondisklog(ObjectStore::Transaction& t);
   void trim_peers();
 
   std::string get_corrupt_pg_log_name() const;
+  static int read_info(ObjectStore *store, const coll_t coll,
+    bufferlist &bl, pg_info_t &info, map<epoch_t,pg_interval_t> &past_intervals,
+    hobject_t &biginfo_oid, interval_set<snapid_t>  &snap_collections);
   void read_state(ObjectStore *store, bufferlist &bl);
   static epoch_t peek_map_epoch(ObjectStore *store,
 				coll_t coll, bufferlist *bl);

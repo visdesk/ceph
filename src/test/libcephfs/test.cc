@@ -423,6 +423,14 @@ TEST(LibCephFS, Xattrs) {
   char *n;
   i = 'a';
   while(len > 0) {
+    // skip/ignore the dir layout
+    if (strcmp(p, "ceph.dir.layout") == 0 ||
+	strcmp(p, "ceph.file.layout") == 0) {
+      len -= strlen(p) + 1;
+      p += strlen(p) + 1;
+      continue;
+    }
+
     sprintf(xattrk, "user.test_xattr_%c", i);
     ASSERT_STREQ(p, xattrk);
 
@@ -887,6 +895,38 @@ TEST(LibCephFS, UseUnmounted) {
   EXPECT_EQ(-ENOTCONN, ceph_debug_get_fd_caps(cmount, 0));
   EXPECT_EQ(-ENOTCONN, ceph_debug_get_file_caps(cmount, "/path"));
   EXPECT_EQ(-ENOTCONN, ceph_get_stripe_unit_granularity(cmount));
+  EXPECT_EQ(-ENOTCONN, ceph_get_pool_id(cmount, "data"));
+  EXPECT_EQ(-ENOTCONN, ceph_get_pool_replication(cmount, 1));
 
   ceph_release(cmount);
+}
+
+TEST(LibCephFS, GetPoolId) {
+  struct ceph_mount_info *cmount;
+  ASSERT_EQ(ceph_create(&cmount, NULL), 0);
+  ASSERT_EQ(ceph_conf_read_file(cmount, NULL), 0);
+  ASSERT_EQ(ceph_mount(cmount, NULL), 0);
+
+  ASSERT_GE(ceph_get_pool_id(cmount, "data"), 0);
+  ASSERT_GE(ceph_get_pool_id(cmount, "metadata"), 0);
+  ASSERT_EQ(ceph_get_pool_id(cmount, "weflkjwelfjwlkejf"), -ENOENT);
+
+  ceph_shutdown(cmount);
+}
+
+TEST(LibCephFS, GetPoolReplication) {
+  struct ceph_mount_info *cmount;
+  ASSERT_EQ(ceph_create(&cmount, NULL), 0);
+  ASSERT_EQ(ceph_conf_read_file(cmount, NULL), 0);
+  ASSERT_EQ(ceph_mount(cmount, NULL), 0);
+
+  /* negative pools */
+  ASSERT_EQ(ceph_get_pool_replication(cmount, -10), -ENOENT);
+
+  /* valid pool */
+  int pool_id = ceph_get_pool_id(cmount, "data");
+  ASSERT_GE(pool_id, 0);
+  ASSERT_GT(ceph_get_pool_replication(cmount, pool_id), 0);
+
+  ceph_shutdown(cmount);
 }

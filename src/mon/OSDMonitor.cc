@@ -461,13 +461,21 @@ void OSDMonitor::encode_pending(bufferlist &bl)
 
 void OSDMonitor::share_map_with_random_osd()
 {
-  // tell any osd
-  MonSession *s = mon->session_map.get_random_osd_session();
-  if (s) {
-    dout(10) << "committed, telling random " << s->inst << " all about it" << dendl;
-    MOSDMap *m = build_incremental(osdmap.get_epoch() - 1, osdmap.get_epoch());  // whatev, they'll request more if they need it
-    mon->messenger->send_message(m, s->inst);
+  if (osdmap.get_num_up_osds() == 0) {
+    dout(10) << __func__ << " no up osds, don't share with anyone" << dendl;
+    return;
   }
+
+  MonSession *s = mon->session_map.get_random_osd_session(&osdmap);
+  if (!s) {
+    dout(10) << __func__ << " no up osd on our session map" << dendl;
+    return;
+  }
+
+  dout(10) << "committed, telling random " << s->inst << " all about it" << dendl;
+  // whatev, they'll request more if they need it
+  MOSDMap *m = build_incremental(osdmap.get_epoch() - 1, osdmap.get_epoch());
+  mon->messenger->send_message(m, s->inst);
 }
 
 
@@ -1449,6 +1457,8 @@ void OSDMonitor::tick()
    * ratio set by g_conf->mon_osd_min_in_ratio. So it's not really up to us.
    */
   if (can_mark_out(-1)) {
+    set<int> down_cache;  // quick cache of down subtrees
+
     map<int,utime_t>::iterator i = down_pending_out.begin();
     while (i != down_pending_out.end()) {
       int o = i->first;
@@ -1473,6 +1483,20 @@ void OSDMonitor::tick()
 		   << " down for " << down << " decay " << decay << dendl;
 	  my_grace = decay * (double)xi.laggy_interval * xi.laggy_probability;
 	  grace += my_grace;
+	}
+
+	// is this an entire large subtree down?
+	if (g_conf->mon_osd_down_out_subtree_limit.length()) {
+	  int type = osdmap.crush->get_type_id(g_conf->mon_osd_down_out_subtree_limit.c_str());
+	  if (type > 0) {
+	    if (osdmap.containing_subtree_is_down(g_ceph_context, o, type, &down_cache)) {
+	      dout(10) << "tick entire containing " << g_conf->mon_osd_down_out_subtree_limit
+		       << " subtree for osd." << o << " is down; resetting timer" << dendl;
+	      // reset timer, too.
+	      down_pending_out[o] = now;
+	      continue;
+	    }
+	  }
 	}
 
 	if (g_conf->mon_osd_down_out_interval > 0 &&
@@ -2323,6 +2347,39 @@ bool OSDMonitor::prepare_command(MMonCommand *m)
 	}
       } while (false);
     }
+    else if (m->cmd.size() == 4 && m->cmd[1] == "crush" && m->cmd[2] == "tunables") {
+      bufferlist bl;
+      if (pending_inc.crush.length())
+	bl = pending_inc.crush;
+      else
+	osdmap.crush->encode(bl);
+
+      CrushWrapper newcrush;
+      bufferlist::iterator p = bl.begin();
+      newcrush.decode(p);
+
+      err = 0;
+      if (m->cmd[3] == "legacy" || m->cmd[3] == "argonaut") {
+	newcrush.set_tunables_legacy();
+      } else if (m->cmd[3] == "bobtail") {
+	newcrush.set_tunables_bobtail();
+      } else if (m->cmd[3] == "optimal") {
+	newcrush.set_tunables_optimal();
+      } else if (m->cmd[3] == "default") {
+	newcrush.set_tunables_default();
+      } else {
+	err = -EINVAL;
+	ss << "unknown tunables profile '" << m->cmd[3] << "'; allowed values are argonaut, bobtail, optimal, or default";
+      }
+      if (err == 0) {
+	pending_inc.crush.clear();
+	newcrush.encode(pending_inc.crush);
+	ss << "adjusted tunables profile to " << m->cmd[3];
+	getline(ss, rs);
+	paxos->wait_for_commit(new Monitor::C_Command(mon, m, 0, rs, paxos->get_version()));
+	return true;
+      }
+    }
     else if (m->cmd[1] == "setmaxosd" && m->cmd.size() > 2) {
       int newmax = parse_pos_long(m->cmd[2].c_str(), &ss);
       if (newmax < 0) {
@@ -2471,6 +2528,11 @@ bool OSDMonitor::prepare_command(MMonCommand *m)
       } else {
 	float w = strtof(m->cmd[3].c_str(), 0);
 	long ww = (int)((float)CEPH_OSD_IN*w);
+	if (ww < 0L) {
+	  ss << "weight must be > 0";
+	  err = -EINVAL;
+	  goto out;
+	}
 	if (osdmap.exists(osd)) {
 	  pending_inc.new_weight[osd] = ww;
 	  ss << "reweighted osd." << osd << " to " << w << " (" << ios::hex << ww << ios::dec << ")";
@@ -2733,19 +2795,28 @@ bool OSDMonitor::prepare_command(MMonCommand *m)
 	paxos->wait_for_commit(new Monitor::C_Command(mon, m, 0, rs, paxos->get_version()));
 	return true;
       } else if (m->cmd[2] == "delete" && m->cmd.size() >= 4) {
-	//hey, let's delete a pool!
+	// osd pool delete <poolname> <poolname again> --yes-i-really-really-mean-it
 	int64_t pool = osdmap.lookup_pg_pool_name(m->cmd[3].c_str());
 	if (pool < 0) {
 	  ss << "pool '" << m->cmd[3] << "' does not exist";
 	  err = 0;
-	} else {
-	  int ret = _prepare_remove_pool(pool);
-	  if (ret == 0)
-	    ss << "pool '" << m->cmd[3] << "' deleted";
-	  getline(ss, rs);
-	  paxos->wait_for_commit(new Monitor::C_Command(mon, m, ret, rs, paxos->get_version()));
-	  return true;
+	  goto out;
 	}
+	if (m->cmd.size() != 6 ||
+	    m->cmd[3] != m->cmd[4] ||
+	    m->cmd[5] != "--yes-i-really-really-mean-it") {
+	  ss << "WARNING: this will *PERMANENTLY DESTROY* all data stored in pool " << m->cmd[3]
+	     << ".  If you are *ABSOLUTELY CERTAIN* that is what you want, pass the pool name *twice*, "
+	     << "followed by --yes-i-really-really-mean-it.";
+	  err = -EPERM;
+	  goto out;
+	}
+	int ret = _prepare_remove_pool(pool);
+	if (ret == 0)
+	  ss << "pool '" << m->cmd[3] << "' deleted";
+	getline(ss, rs);
+	paxos->wait_for_commit(new Monitor::C_Command(mon, m, ret, rs, paxos->get_version()));
+	return true;
       } else if (m->cmd[2] == "rename" && m->cmd.size() == 5) {
 	int64_t pool = osdmap.lookup_pg_pool_name(m->cmd[3].c_str());
 	if (pool < 0) {
@@ -2882,12 +2953,32 @@ bool OSDMonitor::prepare_command(MMonCommand *m)
 
 	const pg_pool_t *p = osdmap.get_pg_pool(pool);
 	if (m->cmd[4] == "pg_num") {
-	  ss << "PG_NUM: " << p->get_pg_num();
+	  ss << "pg_num: " << p->get_pg_num();
 	  err = 0;
 	  goto out;
 	}
 	if (m->cmd[4] == "pgp_num") {
-	  ss << "PGP_NUM: " << p->get_pgp_num();
+	  ss << "pgp_num: " << p->get_pgp_num();
+	  err = 0;
+	  goto out;
+	}
+	if (m->cmd[4] == "size") {
+          ss << "size: " << p->get_size();
+	  err = 0;
+	  goto out;
+	}
+	if (m->cmd[4] == "min_size") {
+	  ss << "min_size: " << p->get_min_size();
+	  err = 0;
+	  goto out;
+	}
+	if (m->cmd[4] == "crash_replay_interval") {
+	  ss << "crash_replay_interval: " << p->get_crash_replay_interval();
+	  err = 0;
+	  goto out;
+	}
+	if (m->cmd[4] == "crush_ruleset") {
+	  ss << "crush_ruleset: " << p->get_crush_ruleset();
 	  err = 0;
 	  goto out;
 	}

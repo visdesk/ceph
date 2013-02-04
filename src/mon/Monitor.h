@@ -234,8 +234,11 @@ private:
   map<entity_inst_t, utime_t> timecheck_waiting;
   map<entity_inst_t, double> timecheck_skews;
   map<entity_inst_t, double> timecheck_latencies;
-  version_t timecheck_epoch;
+  // odd value means we are mid-round; even value means the round has
+  // finished.
   version_t timecheck_round;
+  unsigned int timecheck_acks;
+  utime_t timecheck_round_start;
   /**
    * Time Check event.
    */
@@ -245,10 +248,15 @@ private:
     Monitor *mon;
     C_TimeCheck(Monitor *m) : mon(m) { }
     void finish(int r) {
-      mon->timecheck();
+      mon->timecheck_start_round();
     }
   };
 
+  void timecheck_start();
+  void timecheck_finish();
+  void timecheck_start_round();
+  void timecheck_finish_round(bool success = true);
+  void timecheck_cancel_round();
   void timecheck_cleanup();
   void timecheck_report();
   void timecheck();

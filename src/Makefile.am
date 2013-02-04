@@ -108,7 +108,14 @@ ceph_conf_SOURCES = ceph_conf.cc
 ceph_conf_LDADD = $(LIBGLOBAL_LDA)
 ceph_authtool_SOURCES = ceph_authtool.cc
 ceph_authtool_LDADD = $(LIBGLOBAL_LDA)
-bin_PROGRAMS += ceph ceph-conf ceph-authtool
+ceph_filestore_dump_SOURCES = tools/ceph-filestore-dump.cc objclass/class_debug.cc \
+	       objclass/class_api.cc
+ceph_filestore_dump_SOURCES += perfglue/disabled_heap_profiler.cc
+ceph_filestore_dump_LDADD = libosd.a $(LIBOS_LDA) $(LIBGLOBAL_LDA) -lboost_program_options
+if LINUX
+ceph_filestore_dump_LDADD += -ldl
+endif
+bin_PROGRAMS += ceph ceph-conf ceph-authtool ceph-filestore-dump
 
 monmaptool_SOURCES = monmaptool.cc
 monmaptool_LDADD = $(LIBGLOBAL_LDA)
@@ -160,6 +167,11 @@ ceph_fuse_SOURCES = ceph_fuse.cc client/fuse_ll.cc
 ceph_fuse_LDADD = -lfuse libclient.la $(LIBGLOBAL_LDA)
 ceph_fuse_CXXFLAGS = ${AM_CXXFLAGS}
 bin_PROGRAMS += ceph-fuse
+
+rbd_fuse_SOURCES = rbd_fuse/rbd-fuse.c
+rbd_fuse_LDADD = -lfuse librados.la librbd.la $(LIBGLOBAL_LDA)
+rbd_fuse_CXXFLAGS = ${AM_CXXFLAGS}
+bin_PROGRAMS += rbd-fuse
 
 endif
 
@@ -235,6 +247,10 @@ smalliobenchdumb_SOURCES = test/bench/small_io_bench_dumb.cc test/bench/dumb_bac
 smalliobenchdumb_LDADD = librados.la -lboost_program_options $(LIBOS_LDA) $(LIBGLOBAL_LDA)
 smalliobenchdumb_CXXFLAGS = ${CRYPTO_CXXFLAGS} ${AM_CXXFLAGS}
 bin_DEBUGPROGRAMS += smalliobenchdumb
+
+smalliobenchrbd_SOURCES = test/bench/small_io_bench_rbd.cc test/bench/rbd_backend.cc test/bench/detailed_stat_collector.cc test/bench/bencher.cc
+smalliobenchrbd_LDADD = librados.la librbd.la -lboost_program_options $(LIBGLOBAL_LDA)
+bin_DEBUGPROGRAMS += smalliobenchrbd
 
 tpbench_SOURCES = test/bench/tp_bench.cc test/bench/detailed_stat_collector.cc
 tpbench_LDADD = librados.la -lboost_program_options $(LIBOS_LDA) $(LIBGLOBAL_LDA)
@@ -1894,6 +1910,7 @@ noinst_HEADERS = \
 	common/sync_filesystem.h \
         test/bench/distribution.h \
         test/bench/rados_backend.h \
+        test/bench/rbd_backend.h \
         test/bench/bencher.h \
         test/bench/backend.h \
         test/bench/dumb_backend.h \

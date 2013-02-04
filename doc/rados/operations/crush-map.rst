@@ -482,22 +482,32 @@ A rule takes the following form::
 :Example: ``step take data``
 
 
-``step choose [firstn|indep] {num} type {bucket-type}``
+``step choose firstn {num} type {bucket-type}``
 
-:Description: Selects the number of buckets of the given type, which is usually the number of replicas in the pool. If ``{num} > 0 && < pool-num-replicas``, choose that many buckets; if ``{num} < 0``, it means ``pool-num-replicas - {num}``; and, if ``{num} == 0``, choose ``pool-num-replicas`` buckets (all available).
+:Description: Selects the number of buckets of the given type. The number is usually the number of replicas in the pool (i.e., pool size). 
+
+              - If ``{num} == 0``, choose ``pool-num-replicas`` buckets (all available).
+              - If ``{num} > 0 && < pool-num-replicas``, choose that many buckets.
+              - If ``{num} < 0``, it means ``pool-num-replicas - {num}``.
+
 :Purpose: A component of the rule.
 :Prerequisite: Follows ``step take`` or ``step choose``.  
 :Example: ``step choose firstn 1 type row``
-:Note: The ``indep`` option isn't currently used, as Ceph doesn't support RAID at this time.  
 
 
-``step chooseleaf {num} type {bucket-type}``
+``step chooseleaf firstn {num} type {bucket-type}``
 
-:Description: Selects the number of devices aggregated by a bucket of the given type. The number of devices is usually the number of replicas in the pool. If ``{num} > 0 && < pool-num-replicas``, choose that many buckets; if ``{num} < 0``, it means ``pool-num-replicas - {num}``; and, if ``{num} == 0``, choose ``pool-num-replicas`` buckets (all available).
+:Description: Selects a set of buckets of ``{bucket-type}`` and chooses a leaf node from the subtree of each bucket in the set of buckets. The number of buckets in the set is usually the number of replicas in the pool (i.e., pool size).
+
+              - If ``{num} == 0``, choose ``pool-num-replicas`` buckets (all available).
+              - If ``{num} > 0 && < pool-num-replicas``, choose that many buckets.
+              - If ``{num} < 0``, it means ``pool-num-replicas - {num}``.
+
 :Purpose: A component of the rule. Usage removes the need to select a device using two steps.
 :Prerequisite: Follows ``step take`` or ``step choose``.  
 :Example: ``step chooseleaf firstn 0 type row``
-:Note: The ``indep`` option isn't currently used, as Ceph doesn't support RAID at this time.
+
+
 
 ``step emit`` 
 
@@ -652,10 +662,14 @@ pool to be placed with an SSD as the primary and platters as the replicas.
 Add/Move an OSD
 ===============
 
-To add or move an OSD in the CRUSH map of a running cluster, execute the
-following::
+To add or move an OSD in the CRUSH map of a running cluster, execute the 
+``ceph osd crush set``. For Argonaut (v 0.48), execute the following::
 
-	ceph osd crush set {name} {weight} [{bucket-type}={bucket-name} ...]
+	ceph osd crush set {id} {name} {weight} pool={pool-name}  [{bucket-type}={bucket-name} ...]
+	
+For Bobtail (v 0.56), execute the following:: 
+
+	ceph osd crush set {id-or-name} {weight} pool={pool-name}  [{bucket-type}={bucket-name} ...]
 
 Where:
 
@@ -788,12 +802,12 @@ the v0.48 argonaut series) allow the values to be adjusted or tuned.
 Clusters running recent Ceph releases support using the tunable values
 in the CRUSH maps.  However, older clients and daemons will not correctly interact
 with clusters using the "tuned" CRUSH maps.  To detect this situation,
-there is now a feature bit ``CRUSH_TUNABLES`` (value 0x40000) to
+there are now features bits ``CRUSH_TUNABLES`` (value 0x40000) and ``CRUSH_TUNABLES2`` to
 reflect support for tunables.
 
 If the OSDMap currently used by the ``ceph-mon`` or ``ceph-osd``
-daemon has non-legacy values, it will require the ``CRUSH_TUNABLES``
-feature bit from clients and daemons who connect to it.  This means
+daemon has non-legacy values, it will require the ``CRUSH_TUNABLES`` or ``CRUSH_TUNABLES2``
+feature bits from clients and daemons who connect to it.  This means
 that old clients will not be able to connect.
 
 At some future point in time, newly created clusters will have
@@ -818,12 +832,40 @@ The legacy values result in several misbehaviors:
  * When some OSDs are marked out, the data tends to get redistributed
    to nearby OSDs instead of across the entire hierarchy.
 
-Which client versions support tunables
---------------------------------------
+CRUSH_TUNABLES
+--------------
+
+ * ``choose_local_tries``: Number of local retries.  Legacy value is
+   2, optimal value is 0.
+
+ * ``choose_local_fallback_tries``: Legacy value is 5, optimal value
+   is 0.
+
+ * ``choose_total_tries``: Total number of attempts to choose an item.
+   Legacy value was 19, subsequent testing indicates that a value of
+   50 is more appropriate for typical clusters.  For extremely large
+   clusters, a larger value might be necessary.
+
+CRUSH_TUNABLES2
+---------------
+
+ * ``chooseleaf_descend_once``: Whether a recursive chooseleaf attempt
+   will retry, or only try once and allow the original placement to
+   retry.  Legacy default is 0, optimal value is 1.
+
+
+Which client versions support CRUSH_TUNABLES
+--------------------------------------------
 
  * argonaut series, v0.48.1 or later
  * v0.49 or later
- * Linux kernel version v3.5 or later (for the file system and RBD kernel clients)
+ * Linux kernel version v3.6 or later (for the file system and RBD kernel clients)
+
+Which client versions support CRUSH_TUNABLES2
+---------------------------------------------
+
+ * v0.55 or later, including bobtail series (v0.56.x)
+ * Linux kernel version v3.9 or later (for the file system and RBD kernel clients)
 
 A few important points
 ----------------------
@@ -832,7 +874,7 @@ A few important points
    storage nodes.  If the Ceph cluster is already storing a lot of
    data, be prepared for some fraction of the data to move.
  * The ``ceph-osd`` and ``ceph-mon`` daemons will start requiring the
-   ``CRUSH_TUNABLES`` feature of new connections as soon as they get
+   feature bits of new connections as soon as they get
    the updated map.  However, already-connected clients are
    effectively grandfathered in, and will misbehave if they do not
    support the new feature.
@@ -840,13 +882,35 @@ A few important points
    changed back to the defult values, ``ceph-osd`` daemons will not be
    required to support the feature.  However, the OSD peering process
    requires examining and understanding old maps.  Therefore, you
-   should not run old (pre-v0.48) versions of the ``ceph-osd`` daemon
+   should not run old versions of the ``ceph-osd`` daemon
    if the cluster has previosly used non-legacy CRUSH values, even if
    the latest version of the map has been switched back to using the
    legacy defaults.
 
 Tuning CRUSH
 ------------
+
+The simplest way to adjust the crush tunables is by changing to a known
+profile.  Those are:
+
+ * ``legacy``: the legacy behavior from argonaut and earlier.
+ * ``argonaut``: the legacy values supported by the original argonaut release
+ * ``bobtail``: the values supported by the bobtail release
+ * ``optimal``: the current best values
+ * ``default``: the current default values for a new cluster
+
+Currently, ``legacy``, ``default``, and ``argonaut`` are the same, and
+``bobtail`` and ``optimal`` include ``CRUSH_TUNABLES`` and ``CRUSH_TUNABLES2``.
+
+You can select a profile on a running cluster with the command::
+
+ ceph osd crush tunables {PROFILE}
+
+Note that this may result in some data movement.
+
+
+Tuning CRUSH, the hard way
+--------------------------
 
 If you can ensure that all clients are running recent code, you can
 adjust the tunables by extracting the CRUSH map, modifying the values,

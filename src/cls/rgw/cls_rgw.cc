@@ -6,6 +6,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <errno.h>
+#include <inttypes.h>
 
 #include "include/types.h"
 #include "include/utime.h"
@@ -325,7 +326,7 @@ static int read_index_entry(cls_method_context_t hctx, string& name, struct rgw_
     return -EIO;
   }
 
-  CLS_LOG(1, "read_index_entry(): existing entry: epoch=%lld name=%s locator=%s\n", entry->epoch, entry->name.c_str(), entry->locator.c_str());
+  CLS_LOG(1, "read_index_entry(): existing entry: epoch=%llu name=%s locator=%s\n", (unsigned long long)entry->epoch, entry->name.c_str(), entry->locator.c_str());
   return 0;
 }
 
@@ -340,7 +341,7 @@ int rgw_bucket_complete_op(cls_method_context_t hctx, bufferlist *in, bufferlist
     CLS_LOG(1, "ERROR: rgw_bucket_complete_op(): failed to decode request\n");
     return -EINVAL;
   }
-  CLS_LOG(1, "rgw_bucket_complete_op(): request: op=%d name=%s epoch=%lld tag=%s\n", op.op, op.name.c_str(), op.epoch, op.tag.c_str());
+  CLS_LOG(1, "rgw_bucket_complete_op(): request: op=%d name=%s epoch=%llu tag=%s\n", op.op, op.name.c_str(), (unsigned long long)op.epoch, op.tag.c_str());
 
   bufferlist header_bl;
   struct rgw_bucket_dir_header header;
@@ -444,7 +445,7 @@ int rgw_bucket_complete_op(cls_method_context_t hctx, bufferlist *in, bufferlist
   }
 
   list<string>::iterator remove_iter;
-  CLS_LOG(0, "rgw_bucket_complete_op(): remove_objs.size()=%d\n", op.remove_objs.size());
+  CLS_LOG(0, "rgw_bucket_complete_op(): remove_objs.size()=%d\n", (int)op.remove_objs.size());
   for (remove_iter = op.remove_objs.begin(); remove_iter != op.remove_objs.end(); ++remove_iter) {
     string& remove_oid_name = *remove_iter;
     CLS_LOG(1, "rgw_bucket_complete_op(): removing entries, read_index_entry name=%s\n", remove_oid_name.c_str());
@@ -533,12 +534,12 @@ int rgw_dir_suggest_changes(cls_method_context_t hctx, bufferlist *in, bufferlis
 
     CLS_LOG(20, "cur_disk.pending_map.empty()=%d op=%d cur_disk.exists=%d cur_change.pending_map.size()=%d cur_change.exists=%d\n",
 	    cur_disk.pending_map.empty(), (int)op, cur_disk.exists,
-	    cur_change.pending_map.size(), cur_change.exists);
+	    (int)cur_change.pending_map.size(), cur_change.exists);
 
     if (cur_disk.pending_map.empty()) {
       if (cur_disk.exists) {
         struct rgw_bucket_category_stats& old_stats = header.stats[cur_disk.meta.category];
-        CLS_LOG(10, "total_entries: %d -> %d\n", old_stats.num_entries, old_stats.num_entries - 1);
+        CLS_LOG(10, "total_entries: %"PRId64" -> %"PRId64"\n", old_stats.num_entries, old_stats.num_entries - 1);
         old_stats.num_entries--;
         old_stats.total_size -= cur_disk.meta.size;
         old_stats.total_size_rounded -= get_rounded_size(cur_disk.meta.size);
@@ -554,7 +555,7 @@ int rgw_dir_suggest_changes(cls_method_context_t hctx, bufferlist *in, bufferlis
 	  return ret;
         break;
       case CEPH_RGW_UPDATE:
-        CLS_LOG(10, "CEPH_RGW_UPDATE name=%s total_entries: %d -> %d\n", cur_change.name.c_str(), stats.num_entries, stats.num_entries + 1);
+        CLS_LOG(10, "CEPH_RGW_UPDATE name=%s total_entries: %"PRId64" -> %"PRId64"\n", cur_change.name.c_str(), stats.num_entries, stats.num_entries + 1);
         stats.num_entries++;
         stats.total_size += cur_change.meta.size;
         stats.total_size_rounded += get_rounded_size(cur_change.meta.size);
@@ -901,7 +902,7 @@ static int gc_omap_remove(cls_method_context_t hctx, int type, const string& key
 static void get_time_key(utime_t& ut, string *key)
 {
   char buf[32];
-  snprintf(buf, 32, "%011lld.%09d", (long long)ut.sec(), ut.nsec());
+  snprintf(buf, 32, "%011llu.%09u", (unsigned long long)ut.sec(), ut.nsec());
   *key = buf;
 }
 

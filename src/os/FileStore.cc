@@ -1907,7 +1907,7 @@ void FileStore::op_queue_reserve_throttle(Op *o)
   uint64_t max_ops = m_filestore_queue_max_ops;
   uint64_t max_bytes = m_filestore_queue_max_bytes;
 
-  if (is_committing()) {
+  if (btrfs_stable_commits && is_committing()) {
     max_ops += m_filestore_queue_committing_max_ops;
     max_bytes += m_filestore_queue_committing_max_bytes;
   }
@@ -1946,13 +1946,23 @@ void FileStore::op_queue_release_throttle(Op *o)
   logger->set(l_os_oq_bytes, op_queue_bytes);
 }
 
-void FileStore::_do_op(OpSequencer *osr)
+void FileStore::_do_op(OpSequencer *osr, ThreadPool::TPHandle &handle)
 {
+  // inject a stall?
+  if (g_conf->filestore_inject_stall) {
+    int orig = g_conf->filestore_inject_stall;
+    dout(5) << "_do_op filestore_inject_stall " << orig << ", sleeping" << dendl;
+    for (int n = 0; n < g_conf->filestore_inject_stall; n++)
+      sleep(1);
+    g_conf->set_val("filestore_inject_stall", "0");
+    dout(5) << "_do_op done stalling" << dendl;
+  }
+
   osr->apply_lock.Lock();
   Op *o = osr->peek_queue();
   apply_manager.op_apply_start(o->op);
   dout(5) << "_do_op " << o << " seq " << o->op << " " << *osr << "/" << osr->parent << " start" << dendl;
-  int r = do_transactions(o->tls, o->op);
+  int r = _do_transactions(o->tls, o->op, &handle);
   apply_manager.op_apply_finish(o->op);
   dout(10) << "_do_op " << o << " seq " << o->op << " r = " << r
 	   << ", finisher " << o->onreadable << " " << o->onreadable_sync << dendl;
@@ -2103,7 +2113,10 @@ void FileStore::_journaled_ahead(OpSequencer *osr, Op *o, Context *ondisk)
   }
 }
 
-int FileStore::do_transactions(list<Transaction*> &tls, uint64_t op_seq)
+int FileStore::_do_transactions(
+  list<Transaction*> &tls,
+  uint64_t op_seq,
+  ThreadPool::TPHandle *handle)
 {
   int r = 0;
 
@@ -2122,37 +2135,10 @@ int FileStore::do_transactions(list<Transaction*> &tls, uint64_t op_seq)
     r = _do_transaction(**p, op_seq, trans_num);
     if (r < 0)
       break;
+    if (handle)
+      handle->reset_tp_timeout();
   }
   
-  return r;
-}
-
-unsigned FileStore::apply_transaction(Transaction &t,
-				      Context *ondisk)
-{
-  list<Transaction*> tls;
-  tls.push_back(&t);
-  return apply_transactions(tls, ondisk);
-}
-
-unsigned FileStore::apply_transactions(list<Transaction*> &tls,
-				       Context *ondisk)
-{
-  // use op pool
-  Cond my_cond;
-  Mutex my_lock("FileStore::apply_transaction::my_lock");
-  int r = 0;
-  bool done;
-  C_SafeCond *onreadable = new C_SafeCond(&my_lock, &my_cond, &done, &r);
-  
-  dout(10) << "apply queued" << dendl;
-  queue_transactions(NULL, tls, onreadable, ondisk);
-  
-  my_lock.Lock();
-  while (!done)
-    my_cond.Wait(my_lock);
-  my_lock.Unlock();
-  dout(10) << "apply done r = " << r << dendl;
   return r;
 }
 
@@ -2907,16 +2893,22 @@ int FileStore::_write(coll_t cid, const hobject_t& oid,
     r = bl.length();
 
   // flush?
-  if ((ssize_t)len < m_filestore_flush_min ||
+  {
+    bool should_flush = (ssize_t)len >= m_filestore_flush_min;
 #ifdef HAVE_SYNC_FILE_RANGE
-      !m_filestore_flusher || !queue_flusher(fd, offset, len)
+    if (!should_flush ||
+	!m_filestore_flusher ||
+	!queue_flusher(fd, offset, len)) {
+      if (should_flush && m_filestore_sync_flush)
+	::sync_file_range(fd, offset, len, SYNC_FILE_RANGE_WRITE);
+      lfn_close(fd);
+    }
 #else
-      true
-#endif
-      ) {
-    if (m_filestore_sync_flush)
-      ::sync_file_range(fd, offset, len, SYNC_FILE_RANGE_WRITE);
+    // no sync_file_range; (maybe) flush inline and close.
+    if (should_flush && m_filestore_sync_flush)
+      ::fdatasync(fd);
     lfn_close(fd);
+#endif
   }
 
  out:
@@ -4652,6 +4644,10 @@ const char** FileStore::get_tracked_conf_keys() const
   static const char* KEYS[] = {
     "filestore_min_sync_interval",
     "filestore_max_sync_interval",
+    "filestore_queue_max_ops",
+    "filestore_queue_max_bytes",
+    "filestore_queue_committing_max_ops",
+    "filestore_queue_committing_max_bytes",
     "filestore_flusher",
     "filestore_flusher_max_fds",
     "filestore_sync_flush",
@@ -4669,6 +4665,10 @@ void FileStore::handle_conf_change(const struct md_config_t *conf,
 {
   if (changed.count("filestore_min_sync_interval") ||
       changed.count("filestore_max_sync_interval") ||
+      changed.count("filestore_queue_max_ops") ||
+      changed.count("filestore_queue_max_bytes") ||
+      changed.count("filestore_queue_committing_max_ops") ||
+      changed.count("filestore_queue_committing_max_bytes") ||
       changed.count("filestore_flusher_max_fds") ||
       changed.count("filestore_flush_min") ||
       changed.count("filestore_kill_at") ||
@@ -4676,6 +4676,10 @@ void FileStore::handle_conf_change(const struct md_config_t *conf,
     Mutex::Locker l(lock);
     m_filestore_min_sync_interval = conf->filestore_min_sync_interval;
     m_filestore_max_sync_interval = conf->filestore_max_sync_interval;
+    m_filestore_queue_max_ops = conf->filestore_queue_max_ops;
+    m_filestore_queue_max_bytes = conf->filestore_queue_max_bytes;
+    m_filestore_queue_committing_max_ops = conf->filestore_queue_committing_max_ops;
+    m_filestore_queue_committing_max_bytes = conf->filestore_queue_committing_max_bytes;
     m_filestore_flusher = conf->filestore_flusher;
     m_filestore_flusher_max_fds = conf->filestore_flusher_max_fds;
     m_filestore_flush_min = conf->filestore_flush_min;

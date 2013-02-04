@@ -45,6 +45,17 @@
 #undef generic_dout
 #undef dendl
 
+void string_to_vec(std::vector<std::string>& args, std::string argstr)
+{
+  istringstream iss(argstr);
+  while(iss) {
+    string sub;
+    iss >> sub;
+    if (sub == "") break;
+    args.push_back(sub);
+  }
+}
+
 void env_to_vec(std::vector<const char*>& args, const char *name)
 {
   if (!name)
@@ -421,14 +432,15 @@ static void generic_usage(bool is_server)
 {
   cout << "\
   --conf/-c        Read configuration from the given configuration file\n\
-  -d               Run in foreground, log to stderr.\n\
-  -f               Run in foreground, log to usual location.\n\
   --id/-i          set ID portion of my name\n\
   --name/-n        set name (TYPE.ID)\n\
   --version        show version and quit\n\
 " << std::endl;
 
   if (is_server) {
+    cout << "\
+  -d               Run in foreground, log to stderr.\n\
+  -f               Run in foreground, log to usual location.\n";
     cout << "  --debug_ms N\n";
     cout << "        set message debug level (e.g. 1)\n";
   }

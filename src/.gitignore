@@ -54,6 +54,7 @@
 /fsconverter
 /xattr_bench
 /rest-bench
+/rbd-fuse
 dev
 mondata
 mnt
@@ -111,3 +112,9 @@ Makefile
 /test_librbd_fsx
 /scratchtool
 /scratchtoolpp
+/ceph-filestore-dump
+/smalliobench
+/smalliobenchdumb
+/smalliobenchfs
+/smalliobenchrbd
+/tpbench

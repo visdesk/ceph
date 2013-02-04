@@ -1974,6 +1974,20 @@ void CInode::unfreeze_auth_pin()
   }
 }
 
+void CInode::clear_ambiguous_auth(list<Context*>& finished)
+{
+  assert(state_test(CInode::STATE_AMBIGUOUSAUTH));
+  state_clear(CInode::STATE_AMBIGUOUSAUTH);
+  take_waiting(CInode::WAIT_SINGLEAUTH, finished);
+}
+
+void CInode::clear_ambiguous_auth()
+{
+  list<Context*> finished;
+  clear_ambiguous_auth(finished);
+  mdcache->mds->queue_waiters(finished);
+}
+
 // auth_pins
 bool CInode::can_auth_pin() {
   if (is_freezing_inode() || is_frozen_inode() || is_frozen_auth_pin())
@@ -2629,17 +2643,19 @@ int CInode::encode_inodestat(bufferlist& bl, Session *session,
 {
   int client = session->info.inst.name.num();
   assert(snapid);
-
   assert(session->connection);
   
   bool valid = true;
 
   // do not issue caps if inode differs from readdir snaprealm
   SnapRealm *realm = find_snaprealm();
-  bool no_caps = (realm && dir_realm && realm != dir_realm);
+  bool no_caps = (realm && dir_realm && realm != dir_realm) ||
+		 is_frozen() || state_test(CInode::STATE_EXPORTINGCAPS);
   if (no_caps)
-    dout(20) << "encode_inodestat realm=" << realm << " snaprealm " << snaprealm
-	     << " no_caps=" << no_caps << dendl;
+    dout(20) << "encode_inodestat no caps"
+	     << ((realm && dir_realm && realm != dir_realm)?", snaprealm differs ":"")
+	     << (state_test(CInode::STATE_EXPORTINGCAPS)?", exporting caps":"")
+	     << (is_frozen()?", frozen inode":"") << dendl;
 
   // pick a version!
   inode_t *oi = &inode;
@@ -2705,13 +2721,14 @@ int CInode::encode_inodestat(bufferlist& bl, Session *session,
   i = pfile ? pi:oi;
   if (is_file()) {
     e.layout = i->layout;
-  } else {
-    if (ppolicy && get_projected_dir_layout())
-      e.layout = *get_projected_dir_layout();
-    else if (default_layout)
-      e.layout = default_layout->layout;
+  } else if (is_dir()) {
+    ceph_file_layout *l = ppolicy ? get_projected_dir_layout() : ( default_layout ? &default_layout->layout : NULL );
+    if (l)
+      e.layout = *l;
     else
       memset(&e.layout, 0, sizeof(e.layout));
+  } else {
+    memset(&e.layout, 0, sizeof(e.layout));
   }
   e.size = i->size;
   e.truncate_seq = i->truncate_seq;

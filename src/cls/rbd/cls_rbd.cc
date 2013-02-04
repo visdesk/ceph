@@ -38,6 +38,7 @@
 #include "include/types.h"
 #include "objclass/objclass.h"
 #include "include/rbd_types.h"
+#include <inttypes.h>
 
 #include "cls/rbd/cls_rbd.h"
 
@@ -215,7 +216,8 @@ int create(cls_method_context_t hctx, bufferlist *in, bufferlist *out)
   }
 
   CLS_LOG(20, "create object_prefix=%s size=%llu order=%u features=%llu",
-	  object_prefix.c_str(), size, order, features);
+	  object_prefix.c_str(), (unsigned long long)size, order,
+	  (unsigned long long)features);
 
   if (features & ~RBD_FEATURES_ALL) {
     return -ENOSYS;
@@ -285,7 +287,7 @@ int get_features(cls_method_context_t hctx, bufferlist *in, bufferlist *out)
     return -EINVAL;
   }
 
-  CLS_LOG(20, "get_features snap_id=%llu", snap_id);
+  CLS_LOG(20, "get_features snap_id=%llu", (unsigned long long)snap_id);
 
   if (snap_id == CEPH_NOSNAP) {
     int r = read_key(hctx, "features", &features);
@@ -327,7 +329,8 @@ int require_feature(cls_method_context_t hctx, uint64_t need)
   if (r < 0)
     return r;
   if ((features & need) != need) {
-    CLS_LOG(10, "require_feature missing feature %llx, have %llx", need, features);
+    CLS_LOG(10, "require_feature missing feature %llx, have %llx",
+            (unsigned long long)need, (unsigned long long)features);
     return -ENOEXEC;
   }
   return 0;
@@ -354,7 +357,7 @@ int get_size(cls_method_context_t hctx, bufferlist *in, bufferlist *out)
     return -EINVAL;
   }
 
-  CLS_LOG(20, "get_size snap_id=%llu", snap_id);
+  CLS_LOG(20, "get_size snap_id=%llu", (unsigned long long)snap_id);
 
   int r = read_key(hctx, "order", &order);
   if (r < 0) {
@@ -412,7 +415,8 @@ int set_size(cls_method_context_t hctx, bufferlist *in, bufferlist *out)
     return r;
   }
 
-  CLS_LOG(20, "set_size size=%llu orig_size=%llu", size);
+  CLS_LOG(20, "set_size size=%llu orig_size=%llu", (unsigned long long)size,
+          (unsigned long long)orig_size);
 
   bufferlist sizebl;
   ::encode(size, sizebl);
@@ -488,7 +492,8 @@ int get_protection_status(cls_method_context_t hctx, bufferlist *in,
   if (r < 0)
     return r;
 
-  CLS_LOG(20, "get_protection_status snap_id=%llu", snap_id.val);
+  CLS_LOG(20, "get_protection_status snap_id=%llu",
+         (unsigned long long)snap_id.val);
 
   if (snap_id == CEPH_NOSNAP)
     return -EINVAL;
@@ -498,13 +503,13 @@ int get_protection_status(cls_method_context_t hctx, bufferlist *in,
   key_from_snap_id(snap_id.val, &snapshot_key);
   r = read_key(hctx, snapshot_key, &snap);
   if (r < 0) {
-    CLS_ERR("could not read key for snapshot id %llu", snap_id.val);
+    CLS_ERR("could not read key for snapshot id %"PRIu64, snap_id.val);
     return r;
   }
 
   if (snap.protection_status >= RBD_PROTECTION_STATUS_LAST) {
     CLS_ERR("invalid protection status for snap id %llu: %u",
-	    snap_id.val, snap.protection_status);
+	    (unsigned long long)snap_id.val, snap.protection_status);
     return -EIO;
   }
 
@@ -549,14 +554,14 @@ int set_protection_status(cls_method_context_t hctx, bufferlist *in,
   }
 
   CLS_LOG(20, "set_protection_status snapid=%llu status=%u",
-	  snap_id.val, status);
+	  (unsigned long long)snap_id.val, status);
 
   if (snap_id == CEPH_NOSNAP)
     return -EINVAL;
 
   if (status >= RBD_PROTECTION_STATUS_LAST) {
     CLS_LOG(10, "invalid protection status for snap id %llu: %u",
-	    snap_id.val, status);
+	    (unsigned long long)snap_id.val, status);
     return -EINVAL;
   }
 
@@ -565,7 +570,7 @@ int set_protection_status(cls_method_context_t hctx, bufferlist *in,
   key_from_snap_id(snap_id.val, &snapshot_key);
   r = read_key(hctx, snapshot_key, &snap);
   if (r < 0) {
-    CLS_ERR("could not read key for snapshot id %d", snap_id.val);
+    CLS_ERR("could not read key for snapshot id %"PRIu64, snap_id.val);
     return r;
   }
 
@@ -675,7 +680,8 @@ int set_stripe_unit_count(cls_method_context_t hctx, bufferlist *in, bufferlist 
     return r;
   }
   if ((1ull << order) % stripe_unit) {
-    CLS_ERR("stripe unit %lld is not a factor of the object size %lld", stripe_unit, 1ull << order);
+    CLS_ERR("stripe unit %llu is not a factor of the object size %llu",
+            (unsigned long long)stripe_unit, 1ull << order);
     return -EINVAL;
   }
 
@@ -727,7 +733,7 @@ int get_parent(cls_method_context_t hctx, bufferlist *in, bufferlist *out)
   if (r < 0)
     return r;
 
-  CLS_LOG(20, "get_parent snap_id=%llu", snap_id);
+  CLS_LOG(20, "get_parent snap_id=%llu", (unsigned long long)snap_id);
 
   cls_rbd_parent parent;
   r = require_feature(hctx, RBD_FEATURE_LAYERING);
@@ -795,8 +801,9 @@ int set_parent(cls_method_context_t hctx, bufferlist *in, bufferlist *out)
     return r;
   }
 
-  CLS_LOG(20, "set_parent pool=%lld id=%s snapid=%llu size=%llu",
-	  pool, id.c_str(), snapid.val, size);
+  CLS_LOG(20, "set_parent pool=%llu id=%s snapid=%llu size=%llu",
+	  (unsigned long long)pool, id.c_str(), (unsigned long long)snapid.val,
+	  (unsigned long long)size);
 
   if (pool < 0 || id.length() == 0 || snapid == CEPH_NOSNAP || size == 0) {
     return -EINVAL;
@@ -806,9 +813,10 @@ int set_parent(cls_method_context_t hctx, bufferlist *in, bufferlist *out)
   cls_rbd_parent parent;
   r = read_key(hctx, "parent", &parent);
   if (r == 0) {
-    CLS_LOG(20, "set_parent existing parent pool=%lld id=%s snapid=%llu overlap=%llu",
-	    parent.pool, parent.id.c_str(), parent.snapid.val,
-	    parent.overlap);
+    CLS_LOG(20, "set_parent existing parent pool=%llu id=%s snapid=%llu"
+            "overlap=%llu", (unsigned long long)parent.pool, parent.id.c_str(),
+	    (unsigned long long)parent.snapid.val,
+	    (unsigned long long)parent.overlap);
     return -EEXIST;
   }
 
@@ -946,7 +954,7 @@ int add_child(cls_method_context_t hctx, bufferlist *in, bufferlist *out)
   if (r < 0)
     return r;
 
-  CLS_LOG(20, "add_child %s to (%d, %s, %d)", c_image_id.c_str(),
+  CLS_LOG(20, "add_child %s to (%"PRIu64", %s, %"PRIu64")", c_image_id.c_str(),
 	  p_pool_id, p_image_id.c_str(), p_snap_id.val);
 
   string key = parent_key(p_pool_id, p_image_id, p_snap_id);
@@ -1000,8 +1008,9 @@ int remove_child(cls_method_context_t hctx, bufferlist *in, bufferlist *out)
   if (r < 0)
     return r;
 
-  CLS_LOG(20, "remove_child %s from (%d, %s, %d)", c_image_id.c_str(),
-	       p_pool_id, p_image_id.c_str(), p_snap_id.val);
+  CLS_LOG(20, "remove_child %s from (%"PRIu64", %s, %"PRIu64")",
+	       c_image_id.c_str(), p_pool_id, p_image_id.c_str(),
+	       p_snap_id.val);
 
   string key = parent_key(p_pool_id, p_image_id, p_snap_id);
 
@@ -1060,7 +1069,7 @@ int get_children(cls_method_context_t hctx, bufferlist *in, bufferlist *out)
   if (r < 0)
     return r;
 
-  CLS_LOG(20, "get_children of (%d, %s, %d)",
+  CLS_LOG(20, "get_children of (%"PRIu64", %s, %"PRIu64")",
 	  p_pool_id, p_image_id.c_str(), p_snap_id.val);
 
   string key = parent_key(p_pool_id, p_image_id, p_snap_id);
@@ -1160,7 +1169,7 @@ int get_snapshot_name(cls_method_context_t hctx, bufferlist *in, bufferlist *out
     return -EINVAL;
   }
 
-  CLS_LOG(20, "get_snapshot_name snap_id=%llu", snap_id);
+  CLS_LOG(20, "get_snapshot_name snap_id=%llu", (unsigned long long)snap_id);
 
   if (snap_id == CEPH_NOSNAP)
     return -EINVAL;
@@ -1202,7 +1211,8 @@ int snapshot_add(cls_method_context_t hctx, bufferlist *in, bufferlist *out)
     return -EINVAL;
   }
 
-  CLS_LOG(20, "snapshot_add name=%s id=%llu", snap_meta.name.c_str(), snap_meta.id.val);
+  CLS_LOG(20, "snapshot_add name=%s id=%llu", snap_meta.name.c_str(),
+	 (unsigned long long)snap_meta.id.val);
 
   if (snap_meta.id > CEPH_MAXSNAP)
     return -EINVAL;
@@ -1247,13 +1257,14 @@ int snapshot_add(cls_method_context_t hctx, bufferlist *in, bufferlist *out)
 	::decode(old_meta, iter);
       } catch (const buffer::error &err) {
 	snapid_t snap_id = snap_id_from_key(it->first);
-	CLS_ERR("error decoding snapshot metadata for snap_id: %llu", snap_id.val);
+	CLS_ERR("error decoding snapshot metadata for snap_id: %llu",
+	        (unsigned long long)snap_id.val);
 	return -EIO;
       }
       if (snap_meta.name == old_meta.name || snap_meta.id == old_meta.id) {
 	CLS_LOG(20, "snap_name %s or snap_id %llu matches existing snap %s %llu",
-		snap_meta.name.c_str(), snap_meta.id.val,
-		old_meta.name.c_str(), old_meta.id.val);
+		snap_meta.name.c_str(), (unsigned long long)snap_meta.id.val,
+		old_meta.name.c_str(), (unsigned long long)old_meta.id.val);
 	return -EEXIST;
       }
     }
@@ -1309,7 +1320,7 @@ int snapshot_remove(cls_method_context_t hctx, bufferlist *in, bufferlist *out)
     return -EINVAL;
   }
 
-  CLS_LOG(20, "snapshot_remove id=%llu", snap_id.val);
+  CLS_LOG(20, "snapshot_remove id=%llu", (unsigned long long)snap_id.val);
 
   // check if the key exists. we can't rely on remove_key doing this for
   // us, since OMAPRMKEYS returns success if the key is not there.
@@ -1987,7 +1998,8 @@ int rbd_assign_bid(cls_method_context_t hctx, bufferlist *in, bufferlist *out)
     return rc;
 
   if (rc && rc < (int)sizeof(info)) {
-    CLS_ERR("bad rbd_info object, read %d bytes, expected %d", rc, sizeof(info));
+    CLS_ERR("bad rbd_info object, read %d bytes, expected %d", rc,
+	    (int)sizeof(info));
     return -EIO;
   }
 

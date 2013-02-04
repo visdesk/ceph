@@ -1,6 +1,5 @@
 #                                               -*- Autoconf -*-
 # Process this file with autoconf to produce a configure script.
-m4_include(m4/acx_pthread.m4)
 
 # Autoconf
 AC_PREREQ(2.59)
@@ -12,8 +11,15 @@ AC_PREREQ(2.59)
 AC_INIT([ceph], [0.56], [ceph-devel@vger.kernel.org])
 
 # Create release string.  Used with VERSION for RPMs.
+RPM_RELEASE=0
 AC_SUBST(RPM_RELEASE)
-RPM_RELEASE=`if expr index $(git describe --always) '-' > /dev/null ; then git describe --always | cut -d- -f2- | tr '-' '.' ; else echo "0"; fi`
+if test -d ".git" ; then
+  AC_CHECK_PROG(GIT_CHECK, git, yes)
+  if test x"$GIT_CHECK" = x"yes"; then
+    RPM_RELEASE=`if expr index $(git describe --always) '-' > /dev/null ; then git describe --always | cut -d- -f2- | tr '-' '.' ; else echo "0"; fi`
+  fi
+fi
+AC_MSG_NOTICE([RPM_RELEASE='$RPM_RELEASE'])
 
 AC_CONFIG_MACRO_DIR([m4])
 
@@ -51,7 +57,6 @@ AM_CONDITIONAL(FREEBSD, test x"$freebsd" = x"yes")
 # Checks for programs.
 AC_PROG_CXX
 #AC_PROG_CC
-#AC_PROG_RANLIB
 AC_PROG_MAKE_SET
 AC_PROG_LIBTOOL
 
@@ -236,6 +241,8 @@ AS_IF([test "x$with_fuse" != xno],
                AC_DEFINE([HAVE_LIBFUSE], [1],
                          [Define if you have fuse])
                HAVE_LIBFUSE=1
+	       # look for fuse_getgroups and define FUSE_GETGROUPS if found
+	       AC_CHECK_FUNCS([fuse_getgroups])
               ],
              [AC_MSG_FAILURE(
                    [no FUSE found (use --without-fuse to disable)])])])
@@ -264,18 +271,15 @@ AM_CONDITIONAL(WITH_TCMALLOC, [test "$HAVE_LIBTCMALLOC" = "1"])
 #   - this might become bigger. maybe should be own m4 file
 #
 AC_ARG_ENABLE(cephfs-java,
-    AC_HELP_STRING([--enable-cephfs-java], [build libcephfs Java bindings]),
+    [AC_HELP_STRING([--enable-cephfs-java], [build libcephfs Java bindings])],
     [], [enable_cephfs_java=no])
 
-AM_CONDITIONAL(ENABLE_CEPHFS_JAVA, test "x$enable_cephfs_java" = "xyes")
+AM_CONDITIONAL(ENABLE_CEPHFS_JAVA, [test "x$enable_cephfs_java" = "xyes"])
 
 AC_ARG_WITH(jdk-dir,
     AC_HELP_STRING([--with-jdk-dir(=DIR)], [Path to JDK directory]))
 
-AC_DEFUN([JAVA_DNE],
-	AC_MSG_ERROR([Cannot find $1 '$2'. Try setting --with-jdk-dir]))
-
-AS_IF([test "x$enable_cephfs_java" = "xyes"], [
+if test "x$enable_cephfs_java" = "xyes"; then
 
 	# setup bin/include dirs from --with-jdk-dir (search for jni.h, javac)
 	AS_IF([test -n "$with_jdk_dir"], [
@@ -297,36 +301,38 @@ AS_IF([test "x$enable_cephfs_java" = "xyes"], [
 		   AS_IF([test -r "$jnih"], [
 				  EXTRA_JDK_INC_DIR=`dirname $jnih`])])
 
-  # cephfs_java_test only makes sense if java is already turned on
+        # cephfs_java_test only makes sense if java is already turned on
 	# setup CLASSPATH for Debian default junit4.jar package 
-    #
-    # Configuring --with-debug and --enable-cephfs-java will throw an error if
-    # JUnit4 cannot be found. While currently this works for users who have
-    # installed via the package manager on Ubuntu, we need to expand this
-    # check to 1) support other distrubtions and 2) allow users to influence
-    # the search path.
-  AS_IF([test "x$with_debug" = "xyes"], [
-      dir='/usr/share/java'
-      junit4_jar=`find $dir -name junit4.jar | head -n 1`
-		  AS_IF([test -r "$junit4_jar"], [
-	      EXTRA_CLASSPATH_JAR=`dirname $junit4_jar`/junit4.jar
-      AC_SUBST(EXTRA_CLASSPATH_JAR)], [
-      AC_MSG_ERROR([Cannot find junit4.jar (apt-get install junit4)])])])
+        #
+        # Configuring --with-debug and --enable-cephfs-java will throw an error if
+        # JUnit4 cannot be found. While currently this works for users who have
+        # installed via the package manager on Ubuntu, we need to expand this
+        # check to 1 support other distrubtions and 2 allow users to influence
+        # the search path.
+        AS_IF([test "x$with_debug" = "xyes"], [
+        	dir='/usr/share/java'
+	        junit4_jar=`find $dir -name junit4.jar | head -n 1`
+		AS_IF([test -r "$junit4_jar"], [
+		      EXTRA_CLASSPATH_JAR=`dirname $junit4_jar`/junit4.jar
+		      AC_SUBST(EXTRA_CLASSPATH_JAR)
+		      [have_junit4=1]], [
+		      AC_MSG_NOTICE([Cannot find junit4.jar (apt-get install junit4)])
+		      [have_junit4=0]])])
 
-	# Check for Java programs: javac, javah, jar
-    PATH_save=$PATH
-	PATH="$PATH:$EXTRA_JDK_BIN_DIR"
-	AC_PATH_PROG(JAVAC, javac)
-    AC_PATH_PROG(JAVAH, javah)
-    AC_PATH_PROG(JAR, jar)
-    PATH=$PATH_save
+        AC_CHECK_CLASSPATH
+        AC_PROG_JAVAC
+        AC_PROG_JAVAH
+        AC_PROG_JAR
 
-    # Ensure we have them...
-    AS_IF([test -z "$JAVAC"], JAVA_DNE(program, javac))
-    AS_IF([test -z "$JAVAH"], JAVA_DNE(program, javah))
-    AS_IF([test -z "$JAR"], JAVA_DNE(program, jar))
+        CLASSPATH=$CLASSPATH:$EXTRA_CLASSPATH_JAR
+        export CLASSPATH
+        AC_MSG_NOTICE([classpath - $CLASSPATH])
+        AS_IF([test "$have_junit4" = "1"], [
+		AC_CHECK_CLASS([org.junit.rules.ExternalResource], [], [
+		AC_MSG_NOTICE(Could not find org.junit.rules.ExternalResource)
+		have_junit4=0])])
 
-    # Check for jni.h
+        # Check for jni.h
 	CPPFLAGS_save=$CPPFLAGS
 
 	AS_IF([test -n "$EXTRA_JDK_INC_DIR"],
@@ -335,13 +341,14 @@ AS_IF([test "x$enable_cephfs_java" = "xyes"], [
 				 [JDK_CPPFLAGS="$JDK_CPPFLAGS -I$EXTRA_JDK_INC_DIR/linux"])
 		   CPPFLAGS="$CPPFLAGS $JDK_CPPFLAGS"])
 
-	AC_CHECK_HEADER([jni.h], [], JAVA_DNE(header, jni.h))
+	AC_CHECK_HEADER([jni.h], [], AC_MSG_ERROR([Cannot find header 'jni.h'. Try setting --with-jdk-dir]))
 
 	CPPFLAGS=$CPPFLAGS_save
 
 	# Setup output var
 	AC_SUBST(JDK_CPPFLAGS)
-])
+fi
+AM_CONDITIONAL(HAVE_JUNIT4, [test "$have_junit4" = "1"])
 
 # jni?
 # clear cache (from java above) -- this whole thing will get
@@ -386,7 +393,8 @@ AS_IF([test "x$with_libatomic_ops" != xno],
               ])])
 AS_IF([test "$HAVE_ATOMIC_OPS" = "1"],
 	[],
-	AC_DEFINE([NO_ATOMIC_OPS], [1], [Defined if you don't have atomic_ops]))
+	[AC_DEFINE([NO_ATOMIC_OPS], [1], [Defined if you do not have atomic_ops])])
+
 AM_CONDITIONAL(WITH_LIBATOMIC, [test "$HAVE_ATOMIC_OPS" = "1"])
 
 # newsyn?  requires mpi.
@@ -411,9 +419,6 @@ AS_IF([test "x$with_system_leveldb" = xyes],
 AS_IF([test "x$with_system_leveldb" = xcheck],
 	    [AC_CHECK_LIB([leveldb], [leveldb_open], [with_system_leveldb=yes], [], [-lsnappy -lpthread])])
 AM_CONDITIONAL(WITH_SYSTEM_LEVELDB, [ test "$with_system_leveldb" = "yes" ])
-
-# look for fuse_getgroups and define FUSE_GETGROUPS if found
-AC_CHECK_FUNCS([fuse_getgroups])
 
 # use system libs3?
 AC_ARG_WITH([system-libs3],

@@ -152,6 +152,17 @@ public:
   void handle_client_setattr(MDRequest *mdr);
   void handle_client_setlayout(MDRequest *mdr);
   void handle_client_setdirlayout(MDRequest *mdr);
+
+  int parse_layout_vxattr(string name, string value, ceph_file_layout *layout);
+  void handle_set_vxattr(MDRequest *mdr, CInode *cur,
+			 ceph_file_layout *dir_layout,
+			 set<SimpleLock*> rdlocks,
+			 set<SimpleLock*> wrlocks,
+			 set<SimpleLock*> xlocks);
+  void handle_remove_vxattr(MDRequest *mdr, CInode *cur,
+			    set<SimpleLock*> rdlocks,
+			    set<SimpleLock*> wrlocks,
+			    set<SimpleLock*> xlocks);
   void handle_client_setxattr(MDRequest *mdr);
   void handle_client_removexattr(MDRequest *mdr);
 
@@ -214,9 +225,10 @@ public:
   void _rmsnap_finish(MDRequest *mdr, CInode *diri, snapid_t snapid);
 
   // helpers
-  void _rename_prepare_witness(MDRequest *mdr, int who,
+  void _rename_prepare_witness(MDRequest *mdr, int who, set<int> &witnesse,
 			       CDentry *srcdn, CDentry *destdn, CDentry *straydn);
   version_t _rename_prepare_import(MDRequest *mdr, CDentry *srcdn, bufferlist *client_map_bl);
+  bool _need_force_journal(CInode *diri, bool empty);
   void _rename_prepare(MDRequest *mdr,
 		       EMetaBlob *metablob, bufferlist *client_map_bl,
 		       CDentry *srcdn, CDentry *destdn, CDentry *straydn);
@@ -231,7 +243,8 @@ public:
   void _logged_slave_rename(MDRequest *mdr, CDentry *srcdn, CDentry *destdn, CDentry *straydn);
   void _commit_slave_rename(MDRequest *mdr, int r, CDentry *srcdn, CDentry *destdn, CDentry *straydn);
   void do_rename_rollback(bufferlist &rbl, int master, MDRequest *mdr);
-  void _rename_rollback_finish(Mutation *mut, MDRequest *mdr, CInode *in, CDir *olddir);
+  void _rename_rollback_finish(Mutation *mut, MDRequest *mdr, CDentry *srcdn,
+			       version_t srcdnpv, CDentry *destdn, CDentry *staydn);
 
 };
 

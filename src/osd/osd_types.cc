@@ -509,6 +509,7 @@ void pg_pool_t::dump(Formatter *f) const
   f->dump_unsigned("flags", get_flags());
   f->dump_int("type", get_type());
   f->dump_int("size", get_size());
+  f->dump_int("min_size", get_min_size());
   f->dump_int("crush_ruleset", get_crush_ruleset());
   f->dump_int("object_hash", get_object_hash());
   f->dump_int("pg_num", get_pg_num());
@@ -829,6 +830,7 @@ ostream& operator<<(ostream& out, const pg_pool_t& p)
 {
   out << p.get_type_name()
       << " size " << p.get_size()
+      << " min_size " << p.get_min_size()
       << " crush_ruleset " << p.get_crush_ruleset()
       << " object_hash " << p.get_object_hash_name()
       << " pg_num " << p.get_pg_num()
@@ -847,22 +849,26 @@ ostream& operator<<(ostream& out, const pg_pool_t& p)
 
 void object_stat_sum_t::dump(Formatter *f) const
 {
-  f->dump_unsigned("num_bytes", num_bytes);
-  f->dump_unsigned("num_objects", num_objects);
-  f->dump_unsigned("num_object_clones", num_object_clones);
-  f->dump_unsigned("num_object_copies", num_object_copies);
-  f->dump_unsigned("num_objects_missing_on_primary", num_objects_missing_on_primary);
-  f->dump_unsigned("num_objects_degraded", num_objects_degraded);
-  f->dump_unsigned("num_objects_unfound", num_objects_unfound);
-  f->dump_unsigned("num_read", num_rd);
-  f->dump_unsigned("num_read_kb", num_rd_kb);
-  f->dump_unsigned("num_write", num_wr);
-  f->dump_unsigned("num_write_kb", num_wr_kb);
+  f->dump_int("num_bytes", num_bytes);
+  f->dump_int("num_objects", num_objects);
+  f->dump_int("num_object_clones", num_object_clones);
+  f->dump_int("num_object_copies", num_object_copies);
+  f->dump_int("num_objects_missing_on_primary", num_objects_missing_on_primary);
+  f->dump_int("num_objects_degraded", num_objects_degraded);
+  f->dump_int("num_objects_unfound", num_objects_unfound);
+  f->dump_int("num_read", num_rd);
+  f->dump_int("num_read_kb", num_rd_kb);
+  f->dump_int("num_write", num_wr);
+  f->dump_int("num_write_kb", num_wr_kb);
+  f->dump_int("num_scrub_errors", num_scrub_errors);
+  f->dump_int("num_objects_recovered", num_objects_recovered);
+  f->dump_int("num_bytes_recovered", num_bytes_recovered);
+  f->dump_int("num_keys_recovered", num_keys_recovered);
 }
 
 void object_stat_sum_t::encode(bufferlist& bl) const
 {
-  ENCODE_START(3, 3, bl);
+  ENCODE_START(5, 3, bl);
   ::encode(num_bytes, bl);
   ::encode(num_objects, bl);
   ::encode(num_object_clones, bl);
@@ -874,12 +880,16 @@ void object_stat_sum_t::encode(bufferlist& bl) const
   ::encode(num_rd_kb, bl);
   ::encode(num_wr, bl);
   ::encode(num_wr_kb, bl);
+  ::encode(num_scrub_errors, bl);
+  ::encode(num_objects_recovered, bl);
+  ::encode(num_bytes_recovered, bl);
+  ::encode(num_keys_recovered, bl);
   ENCODE_FINISH(bl);
 }
 
 void object_stat_sum_t::decode(bufferlist::iterator& bl)
 {
-  DECODE_START_LEGACY_COMPAT_LEN(3, 3, 3, bl);
+  DECODE_START_LEGACY_COMPAT_LEN(5, 3, 3, bl);
   ::decode(num_bytes, bl);
   if (struct_v < 3) {
     uint64_t num_kb;
@@ -896,6 +906,19 @@ void object_stat_sum_t::decode(bufferlist::iterator& bl)
   ::decode(num_rd_kb, bl);
   ::decode(num_wr, bl);
   ::decode(num_wr_kb, bl);
+  if (struct_v >= 4)
+    ::decode(num_scrub_errors, bl);
+  else
+    num_scrub_errors = 0;
+  if (struct_v >= 5) {
+    ::decode(num_objects_recovered, bl);
+    ::decode(num_bytes_recovered, bl);
+    ::decode(num_keys_recovered, bl);
+  } else {
+    num_objects_recovered = 0;
+    num_bytes_recovered = 0;
+    num_keys_recovered = 0;
+  }
   DECODE_FINISH(bl);
 }
 
@@ -913,6 +936,10 @@ void object_stat_sum_t::generate_test_instances(list<object_stat_sum_t*>& o)
   a.num_objects_unfound = 8;
   a.num_rd = 9; a.num_rd_kb = 10;
   a.num_wr = 11; a.num_wr_kb = 12;
+  a.num_scrub_errors = 13;
+  a.num_objects_recovered = 14;
+  a.num_bytes_recovered = 15;
+  a.num_keys_recovered = 16;
   o.push_back(new object_stat_sum_t(a));
 }
 
@@ -929,6 +956,10 @@ void object_stat_sum_t::add(const object_stat_sum_t& o)
   num_wr += o.num_wr;
   num_wr_kb += o.num_wr_kb;
   num_objects_unfound += o.num_objects_unfound;
+  num_scrub_errors += o.num_scrub_errors;
+  num_objects_recovered += o.num_objects_recovered;
+  num_bytes_recovered += o.num_bytes_recovered;
+  num_keys_recovered += o.num_keys_recovered;
 }
 
 void object_stat_sum_t::sub(const object_stat_sum_t& o)
@@ -944,6 +975,10 @@ void object_stat_sum_t::sub(const object_stat_sum_t& o)
   num_wr -= o.num_wr;
   num_wr_kb -= o.num_wr_kb;
   num_objects_unfound -= o.num_objects_unfound;
+  num_scrub_errors -= o.num_scrub_errors;
+  num_objects_recovered -= o.num_objects_recovered;
+  num_bytes_recovered -= o.num_bytes_recovered;
+  num_keys_recovered -= o.num_keys_recovered;
 }
 
 
@@ -1017,6 +1052,7 @@ void pg_stat_t::dump(Formatter *f) const
   f->dump_stream("last_scrub_stamp") << last_scrub_stamp;
   f->dump_stream("last_deep_scrub") << last_deep_scrub;
   f->dump_stream("last_deep_scrub_stamp") << last_deep_scrub_stamp;
+  f->dump_stream("last_clean_scrub_stamp") << last_clean_scrub_stamp;
   f->dump_unsigned("log_size", log_size);
   f->dump_unsigned("ondisk_log_size", ondisk_log_size);
   f->dump_stream("stats_invalid") << stats_invalid;
@@ -1033,7 +1069,7 @@ void pg_stat_t::dump(Formatter *f) const
 
 void pg_stat_t::encode(bufferlist &bl) const
 {
-  ENCODE_START(11, 8, bl);
+  ENCODE_START(12, 8, bl);
   ::encode(version, bl);
   ::encode(reported, bl);
   ::encode(state, bl);
@@ -1059,12 +1095,13 @@ void pg_stat_t::encode(bufferlist &bl) const
   ::encode(last_deep_scrub, bl);
   ::encode(last_deep_scrub_stamp, bl);
   ::encode(stats_invalid, bl);
+  ::encode(last_clean_scrub_stamp, bl);
   ENCODE_FINISH(bl);
 }
 
 void pg_stat_t::decode(bufferlist::iterator &bl)
 {
-  DECODE_START_LEGACY_COMPAT_LEN(10, 8, 8, bl);
+  DECODE_START_LEGACY_COMPAT_LEN(12, 8, 8, bl);
   ::decode(version, bl);
   ::decode(reported, bl);
   ::decode(state, bl);
@@ -1133,6 +1170,11 @@ void pg_stat_t::decode(bufferlist::iterator &bl)
   } else {
     ::decode(stats_invalid, bl);
   }
+  if (struct_v >= 12) {
+    ::decode(last_clean_scrub_stamp, bl);
+  } else {
+    last_clean_scrub_stamp = utime_t();
+  }
   DECODE_FINISH(bl);
 }
 
@@ -1160,6 +1202,7 @@ void pg_stat_t::generate_test_instances(list<pg_stat_t*>& o)
   a.last_scrub_stamp = utime_t(11, 12);
   a.last_deep_scrub = eversion_t(13, 14);
   a.last_deep_scrub_stamp = utime_t(15, 16);
+  a.last_clean_scrub_stamp = utime_t(17, 18);
   list<object_stat_collection_t*> l;
   object_stat_collection_t::generate_test_instances(l);
   a.stats = *l.back();
@@ -1247,7 +1290,7 @@ void pool_stat_t::generate_test_instances(list<pool_stat_t*>& o)
 
 void pg_history_t::encode(bufferlist &bl) const
 {
-  ENCODE_START(5, 4, bl);
+  ENCODE_START(6, 4, bl);
   ::encode(epoch_created, bl);
   ::encode(last_epoch_started, bl);
   ::encode(last_epoch_clean, bl);
@@ -1259,12 +1302,13 @@ void pg_history_t::encode(bufferlist &bl) const
   ::encode(last_scrub_stamp, bl);
   ::encode(last_deep_scrub, bl);
   ::encode(last_deep_scrub_stamp, bl);
+  ::encode(last_clean_scrub_stamp, bl);
   ENCODE_FINISH(bl);
 }
 
 void pg_history_t::decode(bufferlist::iterator &bl)
 {
-  DECODE_START_LEGACY_COMPAT_LEN(5, 4, 4, bl);
+  DECODE_START_LEGACY_COMPAT_LEN(6, 4, 4, bl);
   ::decode(epoch_created, bl);
   ::decode(last_epoch_started, bl);
   if (struct_v >= 3)
@@ -1278,10 +1322,13 @@ void pg_history_t::decode(bufferlist::iterator &bl)
   if (struct_v >= 2) {
     ::decode(last_scrub, bl);
     ::decode(last_scrub_stamp, bl);
-    if (struct_v >= 5) {
-      ::decode(last_deep_scrub, bl);
-      ::decode(last_deep_scrub_stamp, bl);
-    }
+  }
+  if (struct_v >= 5) {
+    ::decode(last_deep_scrub, bl);
+    ::decode(last_deep_scrub_stamp, bl);
+  }
+  if (struct_v >= 6) {
+    ::decode(last_clean_scrub_stamp, bl);
   }
   DECODE_FINISH(bl);
 }
@@ -1299,6 +1346,7 @@ void pg_history_t::dump(Formatter *f) const
   f->dump_stream("last_scrub_stamp") << last_scrub_stamp;
   f->dump_stream("last_deep_scrub") << last_deep_scrub;
   f->dump_stream("last_deep_scrub_stamp") << last_deep_scrub_stamp;
+  f->dump_stream("last_clean_scrub_stamp") << last_clean_scrub_stamp;
 }
 
 void pg_history_t::generate_test_instances(list<pg_history_t*>& o)
@@ -1316,6 +1364,7 @@ void pg_history_t::generate_test_instances(list<pg_history_t*>& o)
   o.back()->last_scrub_stamp = utime_t(10, 11);
   o.back()->last_deep_scrub = eversion_t(12, 13);
   o.back()->last_deep_scrub_stamp = utime_t(14, 15);
+  o.back()->last_clean_scrub_stamp = utime_t(16, 17);
 }
 
 
@@ -2733,18 +2782,22 @@ void ScrubMap::generate_test_instances(list<ScrubMap*>& o)
 
 void ScrubMap::object::encode(bufferlist& bl) const
 {
-  ENCODE_START(3, 2, bl);
+  ENCODE_START(5, 2, bl);
   ::encode(size, bl);
   ::encode(negative, bl);
   ::encode(attrs, bl);
   ::encode(digest, bl);
   ::encode(digest_present, bl);
+  ::encode(nlinks, bl);
+  ::encode(snapcolls, bl);
+  ::encode(omap_digest, bl);
+  ::encode(omap_digest_present, bl);
   ENCODE_FINISH(bl);
 }
 
 void ScrubMap::object::decode(bufferlist::iterator& bl)
 {
-  DECODE_START_LEGACY_COMPAT_LEN(3, 2, 2, bl);
+  DECODE_START_LEGACY_COMPAT_LEN(5, 2, 2, bl);
   ::decode(size, bl);
   ::decode(negative, bl);
   ::decode(attrs, bl);
@@ -2752,9 +2805,17 @@ void ScrubMap::object::decode(bufferlist::iterator& bl)
     ::decode(digest, bl);
     ::decode(digest_present, bl);
   }
-  else {
-    digest = 0;
-    digest_present = false;
+  if (struct_v >= 4) {
+    ::decode(nlinks, bl);
+    ::decode(snapcolls, bl);
+  } else {
+    /* Indicates that encoder was not aware of this field since stat must
+     * return nlink >= 1 */
+    nlinks = 0;
+  }
+  if (struct_v >= 5) {
+    ::decode(omap_digest, bl);
+    ::decode(omap_digest_present, bl);
   }
   DECODE_FINISH(bl);
 }

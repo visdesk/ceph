@@ -27,6 +27,7 @@
 class MDS;
 class MDLog;
 class LogSegment;
+class MDSlaveUpdate;
 
 /*
  * a bunch of metadata in the journal
@@ -208,6 +209,7 @@ public:
     static const int STATE_COMPLETE =    (1<<1);
     static const int STATE_DIRTY =       (1<<2);  // dirty due to THIS journal item, that is!
     static const int STATE_NEW =         (1<<3);  // new directory
+    static const int STATE_IMPORTING =	 (1<<4);  // importing directory
 
     //version_t  dirv;
     fnode_t fnode;
@@ -230,6 +232,8 @@ public:
     void mark_dirty() { state |= STATE_DIRTY; }
     bool is_new() const { return state & STATE_NEW; }
     void mark_new() { state |= STATE_NEW; }
+    bool is_importing() { return state & STATE_IMPORTING; }
+    void mark_importing() { state |= STATE_IMPORTING; }
 
     list<std::tr1::shared_ptr<fullbit> >   &get_dfull()   { return dfull; }
     list<remotebit> &get_dremote() { return dremote; }
@@ -293,7 +297,7 @@ private:
   // my lumps.  preserve the order we added them in a list.
   list<dirfrag_t>         lump_order;
   map<dirfrag_t, dirlump> lump_map;
-  fullbit *root;
+  list<std::tr1::shared_ptr<fullbit> > roots;
 
   list<pair<__u8,version_t> > table_tids;  // tableclient transactions
 
@@ -324,6 +328,7 @@ private:
   void decode(bufferlist::iterator& bl);
   void dump(Formatter *f) const;
   static void generate_test_instances(list<EMetaBlob*>& ls);
+
   // soft stateadd
   uint64_t last_subtree_map;
   uint64_t my_offset;
@@ -332,9 +337,7 @@ private:
   //LogSegment *_segment;
 
   EMetaBlob(MDLog *mdl = 0);  // defined in journal.cc
-  ~EMetaBlob() {
-    delete root;
-  }
+  ~EMetaBlob() { }
 
   void print(ostream& out) {
     for (list<dirfrag_t>::iterator p = lump_order.begin();
@@ -488,21 +491,35 @@ private:
     else
       in->encode_snap_blob(snapbl);
 
+    for (list<std::tr1::shared_ptr<fullbit> >::iterator p = roots.begin(); p != roots.end(); p++) {
+      if ((*p)->inode.ino == in->ino()) {
+	roots.erase(p);
+	break;
+      }
+    }
+
     string empty;
-    delete root;
-    root = new fullbit(empty,
-		       in->first, in->last,
-		       0,
-		       *pi, *pdft, *px,
-		       in->symlink, snapbl,
-		       dirty, default_layout, &in->old_inodes);
+    roots.push_back(std::tr1::shared_ptr<fullbit>(new fullbit(empty, in->first, in->last,
+							      0, *pi, *pdft, *px, in->symlink,
+							      snapbl, dirty, default_layout,
+							      &in->old_inodes)));
   }
   
-  dirlump& add_dir(CDir *dir, bool dirty, bool complete=false, bool isnew=false) {
+  dirlump& add_dir(CDir *dir, bool dirty, bool complete=false) {
     return add_dir(dir->dirfrag(), dir->get_projected_fnode(), dir->get_projected_version(),
-		   dirty, complete, isnew);
+		   dirty, complete);
   }
-  dirlump& add_dir(dirfrag_t df, fnode_t *pf, version_t pv, bool dirty, bool complete=false, bool isnew=false) {
+  dirlump& add_new_dir(CDir *dir) {
+    return add_dir(dir->dirfrag(), dir->get_projected_fnode(), dir->get_projected_version(),
+		   true, true, true); // dirty AND complete AND new
+  }
+  dirlump& add_import_dir(CDir *dir) {
+    // dirty=false would be okay in some cases
+    return add_dir(dir->dirfrag(), dir->get_projected_fnode(), dir->get_projected_version(),
+		   true, dir->is_complete(), false, true);
+  }
+  dirlump& add_dir(dirfrag_t df, fnode_t *pf, version_t pv, bool dirty,
+		   bool complete=false, bool isnew=false, bool importing=false) {
     if (lump_map.count(df) == 0)
       lump_order.push_back(df);
 
@@ -512,6 +529,7 @@ private:
     if (complete) l.mark_complete();
     if (dirty) l.mark_dirty();
     if (isnew) l.mark_new();
+    if (importing) l.mark_importing();
     return l;
   }
   
@@ -539,7 +557,7 @@ private:
   }
 
   void update_segment(LogSegment *ls);
-  void replay(MDS *mds, LogSegment *ls=0);
+  void replay(MDS *mds, LogSegment *ls, MDSlaveUpdate *su=NULL);
 };
 WRITE_CLASS_ENCODER(EMetaBlob)
 WRITE_CLASS_ENCODER(EMetaBlob::fullbit)

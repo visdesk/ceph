@@ -24,6 +24,8 @@ Source0:	http://ceph.com/download/%{name}-%{version}.tar.bz2
 Requires:	librbd1 = %{version}-%{release}
 Requires:	librados2 = %{version}-%{release}
 Requires:	libcephfs1 = %{version}-%{release}
+Requires:	perl
+Requires:	python
 Requires(post):	binutils
 BuildRoot:      %{_tmppath}/%{name}-%{version}-build
 BuildRequires:	gcc-c++
@@ -80,6 +82,17 @@ Requires:	libuuid
 BuildRequires:	fuse-devel
 %description fuse
 FUSE based client for Ceph distributed network file system
+
+%package -n rbd-fuse
+Summary:	Ceph fuse-based client
+Group:		System Environment/Base
+Requires:	%{name}
+Requires:	fuse-libs
+Requires:	libstdc++
+Requires:	libuuid
+BuildRequires:	fuse-devel
+%description -n rbd-fuse
+FUSE based client to map Ceph rbd images to files
 
 %package devel
 Summary:	Ceph headers
@@ -189,25 +202,25 @@ Requires:	libcephfs1 = %{version}-%{release}
 %description -n ceph-test
 This package contains Ceph benchmarks and test tools.
 
-%package -n libcephfs-jni
+%package -n libcephfs_jni1
 Summary:	Java Native Interface library for CephFS Java bindings.
 Group:		System Environment/Libraries
 License:	LGPL-2.0
 Requires:	java
 Requires:	libcephfs1 = %{version}-%{release}
 BuildRequires:  java-devel
-%description -n libcephfs-jni
+%description -n libcephfs_jni1
 This package contains the Java Native Interface library for CephFS Java
 bindings.
 
-%package -n libcephfs-java
+%package -n cephfs-java
 Summary:	Java libraries for the Ceph File System.
 Group:		System Environment/Libraries
 License:	LGPL-2.0
 Requires:	java
-Requires:	libcephfs-jni = %{version}-%{release}-
+Requires:	libcephfs_jni1 = %{version}-%{release}
 BuildRequires:  java-devel
-%description -n libcephfs-java
+%description -n cephfs-java
 This package contains the Java libraries for the Ceph File System.
 
 %if (0%{?centos} || 0%{?opensuse} || 0%{?suse_version})
@@ -257,6 +270,8 @@ export RPM_OPT_FLAGS=`echo $RPM_OPT_FLAGS | sed -e 's/i386/i486/'`
 sed -i -e "s/-lcurses/-lncurses/g" Makefile
 sed -i -e "s/-lcurses/-lncurses/g" src/Makefile
 sed -i -e "s/-lcurses/-lncurses/g" man/Makefile
+sed -i -e "s/-lcurses/-lncurses/g" src/ocf/Makefile
+sed -i -e "s/-lcurses/-lncurses/g" src/java/Makefile
 %endif
 
 make -j$(getconf _NPROCESSORS_ONLN)
@@ -278,12 +293,8 @@ mkdir -p $RPM_BUILD_ROOT%{_localstatedir}/log/ceph/
 mkdir -p $RPM_BUILD_ROOT%{_localstatedir}/run/ceph/
 mkdir -p $RPM_BUILD_ROOT%{_sysconfdir}/ceph/
 
-#  Relocate java packages to expected locations in buildroot.
-mkdir -p $RPM_BUILD_ROOT/usr/lib/jni
-mv $RPM_BUILD_ROOT/usr/lib64/libcephfs_jni.so* $RPM_BUILD_ROOT/usr/lib/jni/.
-mkdir -p $RPM_BUILD_ROOT/usr/share/java
-mv $RPM_BUILD_ROOT/usr/lib64/libcephfs.jar  $RPM_BUILD_ROOT/usr/share/java/.
-mv $RPM_BUILD_ROOT/usr/lib64/libcephfs-test.jar $RPM_BUILD_ROOT/usr/share/java/.
+# udev rules
+install -D -m 644 udev/50-rbd.rules $RPM_BUILD_ROOT/lib/udev/rules.d/50-rbd.rules
 
 %clean
 rm -rf $RPM_BUILD_ROOT
@@ -394,6 +405,12 @@ fi
 /sbin/mount.fuse.ceph
 
 #################################################################################
+%files -n rbd-fuse
+%defattr(-,root,root,-)
+%{_bindir}/rbd-fuse
+%{_mandir}/man8/rbd-fuse.8*
+
+#################################################################################
 %files devel
 %defattr(-,root,root,-)
 %dir %{_includedir}/cephfs
@@ -411,6 +428,7 @@ fi
 %{_libdir}/libcephfs.so
 %{_libdir}/librbd.so
 %{_libdir}/librados.so
+%{_libdir}/libcephfs_jni.so
 
 #################################################################################
 %files radosgw
@@ -444,6 +462,9 @@ fi
 %if %{with ocf}
 %files resource-agents
 %defattr(0755,root,root,-)
+%dir /usr/lib/ocf
+%dir /usr/lib/ocf/resource.d
+%dir /usr/lib/ocf/resource.d/ceph
 /usr/lib/ocf/resource.d/%{name}/*
 %endif
 
@@ -462,6 +483,7 @@ fi
 %files -n librbd1
 %defattr(-,root,root,-)
 %{_libdir}/librbd.so.*
+/lib/udev/rules.d/50-rbd.rules
 
 %post -n librbd1
 /sbin/ldconfig
@@ -509,6 +531,8 @@ fi
 %{_bindir}/smalliobench
 %{_bindir}/smalliobenchdumb
 %{_bindir}/smalliobenchfs
+%{_bindir}/smalliobenchrbd
+%{_bindir}/ceph-filestore-dump
 %{_bindir}/streamtest
 %{_bindir}/test_cfuse_cache_invalidate
 %{_bindir}/test_cls_lock
@@ -555,13 +579,13 @@ fi
 %{_bindir}/tpbench
 %{_bindir}/xattr_bench
 
-%files -n libcephfs-jni
+%files -n libcephfs_jni1
 %defattr(-,root,root,-)
-/usr/lib/jni/libcephfs_jni.so*
+%{_libdir}/libcephfs_jni.so.*
 
-%files -n libcephfs-java
+%files -n cephfs-java
 %defattr(-,root,root,-)
-/usr/share/java/libcephfs.jar
-/usr/share/java/libcephfs-test.jar
+%{_javadir}/libcephfs.jar
+%{_javadir}/libcephfs-test.jar
 
 %changelog

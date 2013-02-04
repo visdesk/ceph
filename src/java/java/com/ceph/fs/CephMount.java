@@ -432,6 +432,23 @@ public class CephMount {
    * @param path Path of file to stat.
    * @param stat CephStat structure to hold file status.
    */
+  public void stat(String path, CephStat stat) throws FileNotFoundException, CephNotDirectoryException {
+    rlock.lock();
+    try {
+      native_ceph_stat(instance_ptr, path, stat);
+    } finally {
+      rlock.unlock();
+    }
+  }
+
+  private static native int native_ceph_stat(long mountp, String path, CephStat stat);
+
+  /**
+   * Get file status, without following symlinks.
+   *
+   * @param path Path of file to stat.
+   * @param stat CephStat structure to hold file status.
+   */
   public void lstat(String path, CephStat stat) throws FileNotFoundException, CephNotDirectoryException {
     rlock.lock();
     try {
@@ -477,6 +494,23 @@ public class CephMount {
   }
 
   private static native int native_ceph_chmod(long mountp, String path, int mode);
+
+  /**
+   * Change file mode of an open file.
+   *
+   * @param fd The open file descriptor to change the mode bits on.
+   * @param mode New mode bits.
+   */
+  public void fchmod(int fd, int mode) {
+    rlock.lock();
+    try {
+      native_ceph_fchmod(instance_ptr, fd, mode);
+    } finally {
+      rlock.unlock();
+    }
+  }
+
+  private static native int native_ceph_fchmod(long mountp, int fd, int mode);
 
   /**
    * Truncate a file to a specified length.
@@ -852,6 +886,23 @@ public class CephMount {
   private static native int native_ceph_get_file_stripe_unit(long mountp, int fd);
 
   /**
+   * Get the name of the pool a file is stored in.
+   *
+   * @param fd An open file descriptor.
+   * @return The pool name.
+   */
+  public String get_file_pool_name(int fd) {
+    rlock.lock();
+    try {
+      return native_ceph_get_file_pool_name(instance_ptr, fd);
+    } finally {
+      rlock.unlock();
+    }
+  }
+
+  private static native String native_ceph_get_file_pool_name(long mountp, int fd);
+
+  /**
    * Get the replication of a file.
    *
    * @param fd The file descriptor.
@@ -899,4 +950,42 @@ public class CephMount {
   }
 
   private static native int native_ceph_get_stripe_unit_granularity(long mountp);
+
+  /**
+   * Get the pool id for the named pool.
+   *
+   * @param name The pool name.
+   * @return The pool id.
+   */
+  public int get_pool_id(String name) throws CephPoolException {
+    rlock.lock();
+    try {
+      return native_ceph_get_pool_id(instance_ptr, name);
+    } catch (FileNotFoundException e) {
+      throw new CephPoolException("pool name " + name + " not found");
+    } finally {
+      rlock.unlock();
+    }
+  }
+
+  private static native int native_ceph_get_pool_id(long mountp, String name) throws FileNotFoundException;
+
+  /**
+   * Get the pool replication factor.
+   *
+   * @param pool_id The pool id.
+   * @return Number of replicas stored in the pool.
+   */
+  public int get_pool_replication(int pool_id) throws CephPoolException {
+    rlock.lock();
+    try {
+      return native_ceph_get_pool_replication(instance_ptr, pool_id);
+    } catch (FileNotFoundException e) {
+      throw new CephPoolException("pool id " + pool_id + " not found");
+    } finally {
+      rlock.unlock();
+    }
+  }
+
+  private static native int native_ceph_get_pool_replication(long mountp, int pool_id) throws FileNotFoundException;
 }

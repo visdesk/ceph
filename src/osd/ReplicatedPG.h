@@ -895,6 +895,35 @@ protected:
       pg->put();
     }
   };
+  struct C_OSD_CompletedPushedObjectReplica : public Context {
+    OSDService *osd;
+    Message *reply;
+    ConnectionRef conn;
+    C_OSD_CompletedPushedObjectReplica (
+      OSDService *osd,
+      Message *reply,
+      ConnectionRef conn) : osd(osd), reply(reply), conn(conn) {}
+    void finish(int) {
+      osd->send_message_osd_cluster(reply, conn.get());
+    }
+  };
+  struct C_OSD_CompletedPull : public Context {
+    boost::intrusive_ptr<ReplicatedPG> pg;
+    hobject_t hoid;
+    epoch_t epoch;
+    C_OSD_CompletedPull(
+      ReplicatedPG *pg,
+      const hobject_t &hoid,
+      epoch_t epoch) : pg(pg), hoid(hoid), epoch(epoch) {}
+    void finish(int) {
+      pg->lock();
+      if (epoch >= pg->last_peering_reset) {
+	pg->finish_recovery_op(hoid);
+      }
+      pg->unlock();
+    }
+  };
+  friend class C_OSD_CompletedPull;
   struct C_OSD_AppliedRecoveredObjectReplica : public Context {
     boost::intrusive_ptr<ReplicatedPG> pg;
     ObjectStore::Transaction *t;
@@ -929,6 +958,17 @@ protected:
   virtual void _scrub_clear_state();
   virtual void _scrub_finish();
   object_stat_collection_t scrub_cstat;
+  virtual bool _report_snap_collection_errors(
+    const hobject_t &hoid,
+    int osd,
+    const map<string, bufferptr> &attrs,
+    const set<snapid_t> &snapcolls,
+    uint32_t nlinks,
+    ostream &out);
+  virtual void check_snap_collections(
+    ino_t hino, const hobject_t &hoid,
+    const map<string, bufferptr> &attrs,
+    set<snapid_t> *snapcolls);
 
   virtual void _split_into(pg_t child_pgid, PG *child, unsigned split_bits);
   void apply_and_flush_repops(bool requeue);

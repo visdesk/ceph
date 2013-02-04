@@ -674,6 +674,7 @@ public:
   uint64_t get_flags() const { return flags; }
   unsigned get_type() const { return type; }
   unsigned get_size() const { return size; }
+  unsigned get_min_size() const { return min_size; }
   int get_crush_ruleset() const { return crush_ruleset; }
   int get_object_hash() const { return object_hash; }
   const char *get_object_hash_name() const {
@@ -773,12 +774,20 @@ struct object_stat_sum_t {
   int64_t num_objects_unfound;
   int64_t num_rd, num_rd_kb;
   int64_t num_wr, num_wr_kb;
+  int64_t num_scrub_errors;
+  int64_t num_objects_recovered;
+  int64_t num_bytes_recovered;
+  int64_t num_keys_recovered;
 
   object_stat_sum_t()
     : num_bytes(0),
       num_objects(0), num_object_clones(0), num_object_copies(0),
       num_objects_missing_on_primary(0), num_objects_degraded(0), num_objects_unfound(0),
-      num_rd(0), num_rd_kb(0), num_wr(0), num_wr_kb(0)
+      num_rd(0), num_rd_kb(0), num_wr(0), num_wr_kb(0),
+      num_scrub_errors(0),
+      num_objects_recovered(0),
+      num_bytes_recovered(0),
+      num_keys_recovered(0)
   {}
 
   void clear() {
@@ -885,6 +894,7 @@ struct pg_stat_t {
   eversion_t last_deep_scrub;
   utime_t last_scrub_stamp;
   utime_t last_deep_scrub_stamp;
+  utime_t last_clean_scrub_stamp;
 
   object_stat_collection_t stats;
   bool stats_invalid;
@@ -898,7 +908,7 @@ struct pg_stat_t {
   pg_stat_t()
     : state(0),
       created(0), last_epoch_clean(0),
-      parent_split_bits(0), 
+      parent_split_bits(0),
       stats_invalid(false),
       log_size(0), ondisk_log_size(0),
       mapping_epoch(0)
@@ -978,6 +988,7 @@ struct pg_history_t {
   eversion_t last_deep_scrub;
   utime_t last_scrub_stamp;
   utime_t last_deep_scrub_stamp;
+  utime_t last_clean_scrub_stamp;
 
   pg_history_t()
     : epoch_created(0),
@@ -1017,6 +1028,10 @@ struct pg_history_t {
     }
     if (other.last_deep_scrub_stamp > last_deep_scrub_stamp) {
       last_deep_scrub_stamp = other.last_deep_scrub_stamp;
+      modified = true;
+    }
+    if (other.last_clean_scrub_stamp > last_clean_scrub_stamp) {
+      last_clean_scrub_stamp = other.last_clean_scrub_stamp;
       modified = true;
     }
     return modified;
@@ -1820,8 +1835,14 @@ struct ScrubMap {
     map<string,bufferptr> attrs;
     __u32 digest;
     bool digest_present;
+    uint32_t nlinks;
+    set<snapid_t> snapcolls;
+    __u32 omap_digest;
+    bool omap_digest_present;
 
-    object(): size(0), negative(false), digest(0), digest_present(false) {}
+    object() :
+      size(0), negative(false), digest(0), digest_present(false),
+      nlinks(0), omap_digest(0), omap_digest_present(false) {}
 
     void encode(bufferlist& bl) const;
     void decode(bufferlist::iterator& bl);

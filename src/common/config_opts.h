@@ -92,6 +92,7 @@ OPTION(keyfile, OPT_STR, "")
 OPTION(keyring, OPT_STR, "/etc/ceph/$cluster.$name.keyring,/etc/ceph/$cluster.keyring,/etc/ceph/keyring,/etc/ceph/keyring.bin")
 OPTION(heartbeat_interval, OPT_INT, 5)
 OPTION(heartbeat_file, OPT_STR, "")
+OPTION(heartbeat_inject_failure, OPT_INT, 0)    // force an unhealthy heartbeat for N seconds
 OPTION(perf, OPT_BOOL, true)       // enable internal perf counters
 
 OPTION(ms_tcp_nodelay, OPT_BOOL, true)
@@ -105,6 +106,8 @@ OPTION(ms_bind_port_min, OPT_INT, 6800)
 OPTION(ms_bind_port_max, OPT_INT, 7100)
 OPTION(ms_rwthread_stack_bytes, OPT_U64, 1024 << 10)
 OPTION(ms_tcp_read_timeout, OPT_U64, 900)
+OPTION(ms_pq_max_tokens_per_priority, OPT_U64, 4194304)
+OPTION(ms_pq_min_cost, OPT_U64, 65536)
 OPTION(ms_inject_socket_failures, OPT_U64, 0)
 OPTION(ms_inject_delay_type, OPT_STR, "")          // "osd mds mon client" allowed
 OPTION(ms_inject_delay_max, OPT_DOUBLE, 1)         // seconds
@@ -124,8 +127,10 @@ OPTION(mon_osd_auto_mark_in, OPT_BOOL, false)         // mark any booting osds '
 OPTION(mon_osd_auto_mark_auto_out_in, OPT_BOOL, true) // mark booting auto-marked-out osds 'in'
 OPTION(mon_osd_auto_mark_new_in, OPT_BOOL, true)      // mark booting new osds 'in'
 OPTION(mon_osd_down_out_interval, OPT_INT, 300) // seconds
+OPTION(mon_osd_down_out_subtree_limit, OPT_STR, "rack")   // largest crush unit/type that we will automatically mark out
 OPTION(mon_osd_min_up_ratio, OPT_DOUBLE, .3)    // min osds required to be up to mark things down
 OPTION(mon_osd_min_in_ratio, OPT_DOUBLE, .3)   // min osds required to be in to mark things out
+OPTION(mon_stat_smooth_intervals, OPT_INT, 2)  // smooth stats over last N PGMap maps
 OPTION(mon_lease, OPT_FLOAT, 5)       // lease interval
 OPTION(mon_lease_renew_interval, OPT_FLOAT, 3) // on leader, to renew the lease
 OPTION(mon_lease_ack_timeout, OPT_FLOAT, 10.0) // on leader, if lease isn't acked by all peons
@@ -159,6 +164,8 @@ OPTION(auth_service_required, OPT_STR, "cephx")   // required by daemons of clie
 OPTION(auth_client_required, OPT_STR, "cephx, none")     // what clients require of daemons
 OPTION(auth_supported, OPT_STR, "")               // deprecated; default value for above if they are not defined.
 OPTION(cephx_require_signatures, OPT_BOOL, false) //  If true, don't talk to Cephx partners if they don't support message signing; off by default
+OPTION(cephx_cluster_require_signatures, OPT_BOOL, false)
+OPTION(cephx_service_require_signatures, OPT_BOOL, false)
 OPTION(cephx_sign_messages, OPT_BOOL, true)  // Default to signing session messages if supported
 OPTION(auth_mon_ticket_ttl, OPT_DOUBLE, 60*60*12)
 OPTION(auth_service_ticket_ttl, OPT_DOUBLE, 60*60)
@@ -301,6 +308,7 @@ OPTION(osd_max_pgls, OPT_U64, 1024) // max number of pgls entries to return
 OPTION(osd_client_message_size_cap, OPT_U64, 500*1024L*1024L) // client data allowed in-memory (in bytes)
 OPTION(osd_pg_bits, OPT_INT, 6)  // bits per osd
 OPTION(osd_pgp_bits, OPT_INT, 6)  // bits per osd
+OPTION(osd_crush_chooseleaf_type, OPT_INT, 1) // 1 = host
 OPTION(osd_min_rep, OPT_INT, 1)
 OPTION(osd_max_rep, OPT_INT, 10)
 OPTION(osd_pool_default_crush_rule, OPT_INT, 0)
@@ -312,12 +320,14 @@ OPTION(osd_map_dedup, OPT_BOOL, true)
 OPTION(osd_map_cache_size, OPT_INT, 500)
 OPTION(osd_map_message_max, OPT_INT, 100)  // max maps per MOSDMap message
 OPTION(osd_op_threads, OPT_INT, 2)    // 0 == no threading
+OPTION(osd_op_pq_max_tokens_per_priority, OPT_U64, 4194304)
+OPTION(osd_op_pq_min_cost, OPT_U64, 65536)
 OPTION(osd_disk_threads, OPT_INT, 1)
 OPTION(osd_recovery_threads, OPT_INT, 1)
 OPTION(osd_recover_clone_overlap, OPT_BOOL, true)   // preserve clone_overlap during recovery/migration
 OPTION(osd_backfill_scan_min, OPT_INT, 64)
 OPTION(osd_backfill_scan_max, OPT_INT, 512)
-OPTION(osd_op_thread_timeout, OPT_INT, 30)
+OPTION(osd_op_thread_timeout, OPT_INT, 15)
 OPTION(osd_recovery_thread_timeout, OPT_INT, 30)
 OPTION(osd_snap_trim_thread_timeout, OPT_INT, 60*60*1)
 OPTION(osd_scrub_thread_timeout, OPT_INT, 60)
@@ -344,8 +354,8 @@ OPTION(osd_recovery_max_chunk, OPT_U64, 8<<20)  // max size of push chunk
 OPTION(osd_recovery_forget_lost_objects, OPT_BOOL, false)   // off for now
 OPTION(osd_max_scrubs, OPT_INT, 1)
 OPTION(osd_scrub_load_threshold, OPT_FLOAT, 0.5)
-OPTION(osd_scrub_min_interval, OPT_FLOAT, 300)
-OPTION(osd_scrub_max_interval, OPT_FLOAT, 60*60*24)   // once a day
+OPTION(osd_scrub_min_interval, OPT_FLOAT, 60*60*24)    // if load is low
+OPTION(osd_scrub_max_interval, OPT_FLOAT, 7*60*60*24)  // regardless of load
 OPTION(osd_deep_scrub_interval, OPT_FLOAT, 60*60*24*7) // once a week
 OPTION(osd_deep_scrub_stride, OPT_INT, 524288)
 OPTION(osd_auto_weight, OPT_BOOL, false)
@@ -367,7 +377,7 @@ OPTION(osd_debug_drop_pg_create_duration, OPT_INT, 1)
 OPTION(osd_debug_drop_op_probability, OPT_DOUBLE, 0)   // probability of stalling/dropping a client op
 OPTION(osd_op_history_size, OPT_U32, 20)    // Max number of completed ops to track
 OPTION(osd_op_history_duration, OPT_U32, 600) // Oldest completed op to track
-OPTION(osd_target_transaction_size, OPT_INT, 300)     // to adjust various transactions that batch smaller items
+OPTION(osd_target_transaction_size, OPT_INT, 30)     // to adjust various transactions that batch smaller items
 
 /**
  * osd_client_op_priority and osd_recovery_op_priority adjust the relative
@@ -406,7 +416,7 @@ OPTION(filestore_sync_flush, OPT_BOOL, false)
 OPTION(filestore_journal_parallel, OPT_BOOL, false)
 OPTION(filestore_journal_writeahead, OPT_BOOL, false)
 OPTION(filestore_journal_trailing, OPT_BOOL, false)
-OPTION(filestore_queue_max_ops, OPT_INT, 500)
+OPTION(filestore_queue_max_ops, OPT_INT, 50)
 OPTION(filestore_queue_max_bytes, OPT_INT, 100 << 20)
 OPTION(filestore_queue_committing_max_ops, OPT_INT, 500)        // this is ON TOP of filestore_queue_max_*
 OPTION(filestore_queue_committing_max_bytes, OPT_INT, 100 << 20) //  "
@@ -421,6 +431,7 @@ OPTION(filestore_update_to, OPT_INT, 1000)
 OPTION(filestore_blackhole, OPT_BOOL, false)     // drop any new transactions on the floor
 OPTION(filestore_dump_file, OPT_STR, "")         // file onto which store transaction dumps
 OPTION(filestore_kill_at, OPT_INT, 0)            // inject a failure at the n'th opportunity
+OPTION(filestore_inject_stall, OPT_INT, 0)       // artificially stall for N seconds in op queue thread
 OPTION(filestore_fail_eio, OPT_BOOL, true)       // fail/crash on EIO
 OPTION(journal_dio, OPT_BOOL, true)
 OPTION(journal_aio, OPT_BOOL, false)
@@ -446,6 +457,8 @@ OPTION(rgw_cache_enabled, OPT_BOOL, true)   // rgw cache enabled
 OPTION(rgw_cache_lru_size, OPT_INT, 10000)   // num of entries in rgw cache
 OPTION(rgw_socket_path, OPT_STR, "")   // path to unix domain socket, if not specified, rgw will not run as external fcgi
 OPTION(rgw_dns_name, OPT_STR, "")
+OPTION(rgw_script_uri, OPT_STR, "") // alternative value for SCRIPT_URI if not set in request
+OPTION(rgw_request_uri, OPT_STR,  "") // alternative value for REQUEST_URI if not set in request
 OPTION(rgw_swift_url, OPT_STR, "")             // the swift url, being published by the internal swift auth
 OPTION(rgw_swift_url_prefix, OPT_STR, "swift") // entry point for which a url is considered a swift url
 OPTION(rgw_swift_auth_url, OPT_STR, "")        // default URL to go and verify tokens for v1 auth (if not using internal swift auth)

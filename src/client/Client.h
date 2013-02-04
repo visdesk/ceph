@@ -393,7 +393,7 @@ protected:
 
   Client(Messenger *m, MonClient *mc);
   ~Client();
-  void tear_down_cache();   
+  void tear_down_cache();
 
   client_t get_nodeid() { return whoami; }
 
@@ -452,6 +452,7 @@ protected:
   void _async_invalidate(Inode *in, int64_t off, int64_t len, bool keep_caps);
   void _release(Inode *in);
   bool _flush(Inode *in);
+  void _flush_range(Inode *in, int64_t off, uint64_t size);
   void _flushed(Inode *in);
   void flush_set_callback(ObjectCacher::ObjectSet *oset);
 
@@ -654,6 +655,7 @@ public:
   // expose osdmap 
   int get_local_osd();
   int get_pool_replication(int64_t pool);
+  int64_t get_pool_id(const char *pool_name);
   string get_pool_name(int64_t pool);
 
   int enumerate_layout(int fd, vector<ObjectExtent>& result,
