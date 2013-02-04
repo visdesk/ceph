@@ -45,7 +45,6 @@ class LogSegment {
   elist<CDentry*> dirty_dentries;
 
   elist<CInode*>  open_files;
-  elist<CInode*>  renamed_files;
   elist<CInode*>  dirty_dirfrag_dir;
   elist<CInode*>  dirty_dirfrag_nest;
   elist<CInode*>  dirty_dirfrag_dirfragtree;
@@ -76,7 +75,6 @@ class LogSegment {
     dirty_inodes(member_offset(CInode, item_dirty)),
     dirty_dentries(member_offset(CDentry, item_dirty)),
     open_files(member_offset(CInode, item_open_file)),
-    renamed_files(member_offset(CInode, item_renamed_file)),
     dirty_dirfrag_dir(member_offset(CInode, item_dirty_dirfrag_dir)),
     dirty_dirfrag_nest(member_offset(CInode, item_dirty_dirfrag_nest)),
     dirty_dirfrag_dirfragtree(member_offset(CInode, item_dirty_dirfrag_dirfragtree)),
