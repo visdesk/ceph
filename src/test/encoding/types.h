@@ -151,6 +151,8 @@ TYPE(ESlaveUpdate)
 TYPE(ESubtreeMap)
 #include "mds/events/ETableClient.h"
 TYPE(ETableClient)
+#include "mds/events/ETableServer.h"
+TYPE(ETableServer)
 
 #ifdef WITH_RADOSGW
 
