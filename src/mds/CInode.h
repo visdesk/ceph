@@ -577,7 +577,7 @@ private:
   void fetch(Context *fin);
   void _fetched(bufferlist& bl, bufferlist& bl2, Context *fin);  
 
-  void store_parent(Context *fin);
+  void store_parent(int64_t pool, Context *fin);
   void _stored_parent(version_t v, Context *fin);
 
   void build_backtrace(inode_backtrace_t& bt);

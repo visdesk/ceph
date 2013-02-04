@@ -2593,7 +2593,13 @@ public:
 
     mds->balancer->hit_inode(mdr->now, newi, META_POP_IWR);
 
-    mds->server->reply_request(mdr, 0);
+    // inode linked up now, store the backtrace on the data object 'parent' xattr
+    newi->store_parent(newi->inode.layout.fl_pg_pool, NULL);
+
+    // send journaled reply
+    MClientReply *reply = new MClientReply(mdr->client_request, 0);
+    reply->set_extra_bl(mdr->reply_extra_bl);
+    mds->server->reply_request(mdr, reply);
   }
 };
 
@@ -2712,7 +2718,7 @@ void Server::handle_client_openc(MDRequest *mdr)
   CInode *in = prepare_new_inode(mdr, dn->get_dir(), inodeno_t(req->head.ino),
 				 req->head.args.open.mode | S_IFREG, &layout);
   assert(in);
-  
+
   // it's a file.
   dn->push_projected_linkage(in);
 
@@ -3861,6 +3867,13 @@ public:
 
     // hit pop
     mds->balancer->hit_inode(mdr->now, newi, META_POP_IWR);
+
+    // store the backtrace on the 'parent' xattr
+    if (newi->inode.is_dir()) {
+      newi->store_parent(mds->mdsmap->get_metadata_pool(), NULL);
+    } else {
+      newi->store_parent(newi->inode.layout.fl_pg_pool, NULL);
+    }
 
     // reply
     MClientReply *reply = new MClientReply(mdr->client_request, 0);
@@ -5776,6 +5789,11 @@ void Server::_rename_finish(MDRequest *mdr, CDentry *srcdn, CDentry *destdn, CDe
 
   // did we import srci?  if so, explicitly ack that import that, before we unlock and reply.
   
+  if (destdnl->inode->is_dir()) {
+    destdnl->inode->store_parent(mds->mdsmap->get_metadata_pool(), NULL);
+  } else {
+    destdnl->inode->store_parent(destdnl->inode->inode.layout.fl_pg_pool, NULL);
+  }
 
   // reply
   MClientReply *reply = new MClientReply(mdr->client_request, 0);

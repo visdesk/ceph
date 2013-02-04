@@ -1023,10 +1023,11 @@ struct C_Inode_StoredParent : public Context {
   }
 };
 
-void CInode::store_parent(Context *fin)
+void CInode::store_parent(int64_t pool, Context *fin)
 {
-  dout(10) << "store_parent" << dendl;
-  
+  state_set(STATE_DIRTYPARENT);
+  get(PIN_DIRTYPARENT);
+
   ObjectOperation m;
   encode_parent_mutation(m);
 
@@ -1034,7 +1035,10 @@ void CInode::store_parent(Context *fin)
   SnapContext snapc;
 
   object_t oid = get_object_name(ino(), frag_t(), "");
-  object_locator_t oloc(mdcache->mds->mdsmap->get_metadata_pool());
+
+  dout(10) << "store_parent for oid " << oid << " pool " << pool << dendl;
+
+  object_locator_t oloc(pool);
 
   mdcache->mds->objecter->mutate(oid, oloc, m, snapc, ceph_clock_now(g_ceph_context), 0,
 				 NULL, new C_Inode_StoredParent(this, inode.last_renamed_version, fin) );
