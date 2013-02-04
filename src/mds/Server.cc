@@ -3007,6 +3007,8 @@ public:
   void finish(int r) {
     assert(r == 0);
 
+    int64_t old_pool = in->inode.layout.fl_pg_pool;
+
     // apply
     in->pop_and_dirty_projected_inode(mdr->ls);
     mdr->apply();
@@ -3023,6 +3025,12 @@ public:
 
     if (changed_ranges)
       mds->locker->share_inode_max_size(in);
+
+    // if pool changed, write a new backtrace and set sentinel on old
+    if (old_pool != in->inode.layout.fl_pg_pool) {
+      in->store_parent(in->inode.layout.fl_pg_pool, NULL);
+      in->store_parent(old_pool, NULL, in->inode.layout.fl_pg_pool);
+    }
   }
 };
 

@@ -1966,7 +1966,7 @@ void CDir::_commit(version_t want)
   //  NOTE: the pointer is ONLY required to be valid for the first frag.  we put the xattr
   //        on other frags too because it can't hurt, but it won't necessarily be up to date
   //        in that case!!
-  max_write_size -= inode->encode_parent_mutation(m);
+  max_write_size -= inode->encode_parent_mutation(m, cache->mds->mdsmap->get_metadata_pool());
 
   if (is_complete() &&
       (num_dirty > (num_head_items*g_conf->mds_dir_commit_ratio))) {

@@ -577,11 +577,11 @@ private:
   void fetch(Context *fin);
   void _fetched(bufferlist& bl, bufferlist& bl2, Context *fin);  
 
-  void store_parent(int64_t pool, Context *fin);
+  void store_parent(int64_t pool, Context *fin, int64_t sentinel = -1);
   void _stored_parent(version_t v, Context *fin);
 
   void build_backtrace(inode_backtrace_t& bt);
-  unsigned encode_parent_mutation(ObjectOperation& m);
+  unsigned encode_parent_mutation(ObjectOperation& m, int64_t pool);
 
   void encode_store(bufferlist& bl) {
     __u8 struct_v = 2;

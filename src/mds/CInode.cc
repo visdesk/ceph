@@ -998,15 +998,16 @@ void CInode::build_backtrace(inode_backtrace_t& bt)
   }
 }
 
-unsigned CInode::encode_parent_mutation(ObjectOperation& m)
+unsigned CInode::encode_parent_mutation(ObjectOperation& m, int64_t pool)
 {
   string path;
   make_path_string(path);
   m.setxattr("path", path);
 
   inode_backtrace_t bt;
+  bt.pool = pool;
   build_backtrace(bt);
-  
+
   bufferlist parent;
   ::encode(bt, parent);
   m.setxattr("parent", parent);
@@ -1023,13 +1024,15 @@ struct C_Inode_StoredParent : public Context {
   }
 };
 
-void CInode::store_parent(int64_t pool, Context *fin)
+void CInode::store_parent(int64_t pool, Context *fin, int64_t sentinel)
 {
   state_set(STATE_DIRTYPARENT);
   get(PIN_DIRTYPARENT);
 
   ObjectOperation m;
-  encode_parent_mutation(m);
+  // encode the sentinel if its specified (not -1), otherwise the pool
+  // field holds the pool that the backtrace is placed into
+  encode_parent_mutation(m, (sentinel != -1 ? sentinel : pool));
 
   // write it.
   SnapContext snapc;
