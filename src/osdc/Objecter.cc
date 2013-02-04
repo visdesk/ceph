@@ -36,6 +36,9 @@
 
 #include "messages/MOSDFailure.h"
 
+#include "messages/MCommand.h"
+#include "messages/MCommandReply.h"
+
 #include <errno.h>
 
 #include "common/config.h"
@@ -386,6 +389,10 @@ void Objecter::dispatch(Message *m)
 
   case CEPH_MSG_POOLOP_REPLY:
     handle_pool_op_reply((MPoolOpReply*)m);
+    break;
+
+  case CEPH_MSG_COMMAND_REPLY:
+    handle_command_reply((MCommandReply*)m);
     break;
 
   default:
@@ -2141,4 +2148,34 @@ bool Objecter::RequestStateHook::call(std::string command, std::string args, buf
   formatter.flush(ss);
   out.append(ss);
   return true;
+}
+
+// commands
+
+void Objecter::handle_command_reply(MCommandReply *m)
+{
+}
+
+tid_t Objecter::_submit_command(CommandOp *c)
+{
+  tid_t tid = ++last_tid;
+  c->tid = tid;
+  command_ops[tid] = c;
+  _send_command(c);
+  return tid;
+}
+
+void Objecter::_send_comand(CommandOp *c)
+{
+
+}
+
+void Objecter::_finish_command(CommandOp *c, int r, string rs)
+{
+  if (c->prs)
+    *c->prs = rs;
+  if (c->onfinish)
+    finisher.queue(c->onfinish, r);
+  command_ops.erase(c->tid);
+  delete c;
 }

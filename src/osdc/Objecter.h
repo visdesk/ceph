@@ -41,6 +41,7 @@ class MPoolOpReply;
 
 class MGetPoolStatsReply;
 class MStatfsReply;
+class MCommandReply;
 
 class PerfCounters;
 
@@ -789,6 +790,26 @@ public:
 	       auid(0), crush_rule(0), snapid(0), blp(NULL) {}
   };
 
+  // -- osd commands --
+  struct CommandOp {
+    tid_t tid;
+    vector<string> cmd;
+    bufferlist inbl;
+    bufferlist *poutbl;
+    string *prs;
+    int target_osd;
+    pg_t target_pg;
+    Context *onfinish;
+
+    utime_t last_submit;
+    CommandOp() : tid(0), poutbl(NULL), prs(NULL), target_osd(-1) {}
+  };
+
+  tid_t _submit_command(CommandOp *c);
+  void _send_command(CommandOp *c);
+  void _finish_command(CommandOp *c, int r, string rs);
+  void handle_command_reply(MCommandReply *m);
+
 
   // -- lingering ops --
 
@@ -888,6 +909,7 @@ public:
   map<tid_t,PoolStatOp*>    poolstat_ops;
   map<tid_t,StatfsOp*>      statfs_ops;
   map<tid_t,PoolOp*>        pool_ops;
+  map<tid_t,CommandOp*>     command_ops;
 
   // ops waiting for an osdmap with a new pool or confirmation that
   // the pool does not exist (may be expanded to other uses later)
@@ -1042,6 +1064,30 @@ private:
   void add_global_op_flags(int flag) { global_op_flags |= flag; }
   /** Clear the passed flags from the global op flag set */
   void clear_global_op_flag(int flags) { global_op_flags &= ~flags; }
+
+  // commands
+  tid_t osd_command(int osd, vector<string>& cmd, bufferlist& inbl,
+		    bufferlist *poutbl, string *prs, Context *onfinish) {
+    CommandOp *c = new CommandOp;
+    c->cmd = cmd;
+    c->inbl = inbl;
+    c->poutbl = poutbl;
+    c->prs = prs;
+    c->onfinish = onfinish;
+    c->target_osd = osd;
+    return _submit_command(c);
+  }
+  tid_t pg_command(pg_t pgid, vector<string>& cmd, bufferlist& inbl,
+		   bufferlist *poutbl, string *prs, Context *onfinish) {
+    CommandOp *c = new CommandOp;
+    c->cmd = cmd;
+    c->inbl = inbl;
+    c->blp = poutbl;
+    c->prs = prs;
+    c->onfinish = onfinish;
+    c->target_pg = pgid;
+    return _submit_command(c);
+  }
 
   // mid-level helpers
   tid_t mutate(const object_t& oid, const object_locator_t& oloc, 
