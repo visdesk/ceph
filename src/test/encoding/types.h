@@ -148,6 +148,9 @@ TYPE(rename_rollback::drec)
 TYPE(rename_rollback)
 TYPE(ESlaveUpdate)
 
+#include "mds/events/ESubtreeMap.h"
+TYPE(ESubtreeMap)
+
 #ifdef WITH_RADOSGW
 
 #include "rgw/rgw_rados.h"
