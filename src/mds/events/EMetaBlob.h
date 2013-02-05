@@ -357,7 +357,7 @@ private:
     ENCODE_FINISH(bl);
   }
   void decode(bufferlist::iterator &bl) {
-    DECODE_START_LEGACY_COMPAT_LEN(4, 4, 4, bl);
+    DECODE_START_LEGACY_COMPAT_LEN(5, 5, 5, bl);
     ::decode(lump_order, bl);
     ::decode(lump_map, bl);
     if (struct_v >= 4) {
